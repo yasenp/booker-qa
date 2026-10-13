@@ -22,9 +22,11 @@ If Node is installed without nvm, ensure Node 24 or later is on PATH instead.
 
 ```sh
 python -m pytest -n 2 --alluredir=reports/offline/allure-results --clean-alluredir --junitxml=reports/offline.xml
+python scripts/report_coverage.py --mode offline
 npm run report:offline
 
 python -m pytest --live -n 2 --alluredir=reports/live/allure-results --clean-alluredir --junitxml=reports/live.xml
+python scripts/report_coverage.py --mode live
 npm run report:live
 ```
 
@@ -74,8 +76,9 @@ Secondary duplicate clients share that test's collector.
 
 HTTP evidence contains method, endpoint path, attempt count, elapsed milliseconds,
 status/error class, and JSON request/response bodies. Authentication bodies are
-omitted entirely. Headers, query strings, non-JSON bodies, and exception messages
-are omitted. Sensitive structured keys are recursively redacted before storage.
+omitted entirely. Authentication and arbitrary headers, query strings, non-JSON bodies, and exception
+messages are omitted. Only Accept, Content-Type, Content-Length, Retry-After, ETag,
+and Last-Modified headers are allowed. Sensitive structured keys are recursively redacted before storage.
 Automatic stdout/stderr/log attachments are disabled with `--allure-no-capture`.
 
 Concurrent reconciliation attaches both candidates, responses, release skew, and
@@ -127,3 +130,53 @@ new run/attempt key after report generation, including when tests fail. Reports 
 history are also uploaded as artifacts. Remote cache behavior has not been exercised
 from this local workspace. Concurrent CI jobs on the same branch can each restore
 an earlier snapshot; this cache is not an atomic shared history database.
+
+
+## Request, response, and verification evidence
+
+Each HTTP attempt has a numbered step with setup/call/teardown phase, endpoint,
+attempt number, outcome, and actual duration. Open its separate **Request** and
+**Response** JSON attachments to view formatted payloads and allowed headers.
+A request ID ties retry attempts together. Concurrent requests are displayed in
+start-time order; threads only collect evidence and never call Allure directly.
+Presentation steps are emitted after execution, so use their recorded `elapsed_ms`
+for HTTP timing rather than the presentation step's own duration. The complete
+collector trace remains available as **Sanitized HTTP attempts**.
+
+Comparison attachments contain expected/actual values, match status, and differences
+such as `$.bookingdates.checkout`. Differences distinguish additions, removals,
+missing fields, null values, array elements, and JSON value types. Sensitive values
+remain redacted even when differences are displayed.
+
+- PUT: per-iteration response/persisted comparisons and an idempotency summary.
+- PATCH: patch payload, before/after states, changed fields, and untouched-field check.
+- Concurrency: both writer outcomes even if one fails, final state, matching candidate,
+  per-candidate differences, and client release skew. Worker exceptions retain their
+  original failure classification after outcomes are attached.
+- Business gaps: expected rejection codes, actual response, and known-gap context.
+- Retry: triggering HTTP status or error class, next attempt, and backoff duration.
+- Authentication: token acquired and refresh-trigger events; token values are omitted.
+- Recovery: original/replacement IDs and bounded-recovery exhaustion events.
+- Cleanup: every owned ID's DELETE result, confirming GET status when needed, and outcome.
+
+Comparisons are attached before assertions. HTTP evidence is collected at the client
+boundary and rendered after the test call and again during teardown, so setup/call/
+teardown failures still retain evidence. Isolated reporting tests verify all three
+failure phases without injecting failures into the real sandbox suite.
+
+
+## Idempotency evidence and scope labels
+
+`scenario_type` distinguishes identical-request idempotency, conflicting-update
+integrity, and response-loss simulation. The original three-PUT test keeps its
+historical identity. Additional counts and worker counts are separate new cases.
+Idempotency summaries include initial state, shared payload, response outcomes,
+repetition count, snapshots/final state, and differences. Repeated DELETE records
+all response codes and confirming GET 404 checks; equal DELETE statuses are not
+required. Set-value PATCH summaries verify full-state stability across repetition.
+
+`docs/idempotency-coverage.md` and the current mode's `reports/<mode>/coverage.json`
+are global report attachments. Run the coverage script before generating the report;
+it reports catalog numerators/denominators from actual results rather than targets.
+The CI workflow performs that step automatically. Simulated commit counts remain
+explicitly labeled as local-model evidence, never live database measurements.

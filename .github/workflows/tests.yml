@@ -44,11 +44,15 @@ jobs:
       - name: Generate offline Allure 3 report
         id: offline_report
         if: always()
-        run: npm run report:offline
+        run: |
+          python scripts/report_coverage.py --mode offline
+          npm run report:offline
       - name: Generate live Allure 3 report
         id: live_report
         if: always() && github.event_name == 'workflow_dispatch' && inputs.live
-        run: npm run report:live
+        run: |
+          python scripts/report_coverage.py --mode live
+          npm run report:live
       - uses: actions/cache/save@v4
         if: always() && (steps.offline_report.outcome == 'success' || steps.live_report.outcome == 'success')
         with:

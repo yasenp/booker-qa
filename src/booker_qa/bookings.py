@@ -41,28 +41,41 @@ class BookingRegistry:
                 response.raise_for_status()
                 return response.json()
             if attempt == max_recreates:
+                self.client.event("recovery_exhausted", booking_id=handle.booking_id, max_recreates=max_recreates)
                 raise RuntimeError("Prerequisite remained missing after bounded recovery")
             old_id = handle.booking_id
             replacement, _ = self.create(handle.payload)
             handle.booking_id = replacement.booking_id
             self.recoveries.append((old_id, handle.booking_id))
+            self.client.event("prerequisite_recreated", original_id=old_id, replacement_id=handle.booking_id,
+                              reason="GET returned 404", recreation_number=attempt + 1)
             log.warning("Recreated missing prerequisite booking %s as %s", old_id, handle.booking_id)
         raise RuntimeError("Unreachable recovery state")
 
     def cleanup(self):
         errors = []
         for booking_id in self.ids:
+            detail = {"booking_id": booking_id}
             try:
                 response = self.client.request("DELETE", f"/booking/{booking_id}", authenticated=True)
+                detail["delete_status"] = response.status_code
                 # This sandbox can return 405 on repeated DELETE. Accept it only
                 # after a GET proves the record is absent, never unconditionally.
                 if response.status_code == 405:
                     absent = self.client.request("GET", f"/booking/{booking_id}")
+                    detail["confirming_get_status"] = absent.status_code
                     if absent.status_code == 404:
+                        detail["outcome"] = "absence confirmed"
                         continue
                 if response.status_code not in {200, 201, 204, 404}:
+                    detail["outcome"] = "failed"
                     errors.append(f"{booking_id}: HTTP {response.status_code}")
+                else:
+                    detail["outcome"] = "already absent" if response.status_code == 404 else "deleted"
             except Exception as exc:
+                detail.update(outcome="failed", error=type(exc).__name__)
                 errors.append(f"{booking_id}: {type(exc).__name__}")
+            finally:
+                self.client.event("cleanup_result", **detail)
         if errors:
             raise RuntimeError("Cleanup failed for owned bookings: " + ", ".join(errors))

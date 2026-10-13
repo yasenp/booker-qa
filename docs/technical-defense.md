@@ -16,9 +16,13 @@
 5. Schema validation checks types and explicit date formats. Business invariants
    enforce ordering and nonnegative price separately, because the server accepts
    values violating them. JSON Schema format checks are explicitly enabled.
-6. PUT tests compare persisted snapshots after all three writes. PATCH compares
-   the entire record. These checks do not claim hidden side effects are absent.
-7. Concurrent writers share a thread-safe client and token manager. A barrier
+6. The original PUT test retains its three persisted snapshots and historical ID.
+   Additional sequential counts (2/5), concurrent identical PUTs (2/4 writers),
+   repeated DELETE, and set-value PATCH verify observable state. Response equality
+   is a separate contract assertion. These checks do not claim hidden effects are
+   absent or that resource versions cannot advance; those need extra contracts.
+7. Conflicting writers test collision integrity, separately from identical-request
+   concurrency idempotency. Concurrent writers share a thread-safe client and token manager. A barrier
    coordinates release. Every distinguishing field, including nested dates,
    differs between candidates. Final membership detects partial payload merges.
    Client start skew and the winning payload are attached to JUnit results.
@@ -45,3 +49,25 @@ and token values are never written to reports.
 
 The offline preparation can use AI; the assessment requires an unaided live
 walkthrough. Practice explaining these tradeoffs and running individual tests.
+
+
+## Idempotency coverage and production discussion
+
+The supported live catalog has four families/seven cases. Controlled response-loss
+coverage has eight cases (four mutation methods crossed with before/after simulated
+commit). Counts come from the actual Allure run, with skipped, executed, and passed
+results separated. Neither catalog is a percentage of all API behaviors. Server
+branch coverage and hidden effects remain unmeasured.
+
+Explain why our client does not replay an ambiguous mutation even when PUT/DELETE
+semantics can permit a retry: conservative shared-sandbox behavior, no version
+preconditions, and intervening writes. The local model demonstrates the client
+policy, not server rollback or deduplication. A production lost-response test must
+confirm commitment independently before dropping the response.
+
+Key-based POST deduplication would require documented key syntax, tenant/endpoint
+scope, fingerprint rules, replay behavior, failure policy, and retention. Use scoped
+operation/audit counts and unique correlation IDs. Async effects need bounded polling;
+message delivery counts are distinct from completed business effects. Deterministic
+server failpoints and multi-replica/restart controls are absent from this target.
+See idempotency-coverage.md for the complete prerequisites and standards caveat.

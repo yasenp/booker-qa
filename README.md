@@ -69,6 +69,7 @@ when a confirming GET returns 404. Other cleanup failures remain visible.
 
 - [API discovery](docs/api-discovery.md)
 - [Requirements coverage and unsupported capabilities](docs/requirements-coverage.md)
+- [Idempotency catalog and production extensions](docs/idempotency-coverage.md)
 - [Technical walkthrough and limits](docs/technical-defense.md)
 - [Validation results](docs/validation-results.md)
 - [Allure Report 3 setup and evidence](docs/allure-reporting.md)
@@ -90,11 +91,33 @@ npm run report:live
 Open `reports/live/html/index.html` directly in a browser. For an offline report,
 use `reports/offline/allure-results` and `npm run report:offline`.
 Allure shows known XFAIL business gaps as skipped, with labels and explanations;
-pytest still enforces strict XPASS. Reports contain sanitized API evidence,
-concurrency reconciliation, cleanup/recovery details, and environment metadata.
+pytest still enforces strict XPASS. Reports contain numbered request/response steps with sanitized payloads and headers,
+field-level expected/actual differences, PUT/PATCH summaries, concurrency reconciliation,
+retry/authentication events, cleanup/recovery details, and environment metadata.
 See [the reporting guide](docs/allure-reporting.md) for installation and validation.
 
 Allure history is retained separately in `reports/history/live.jsonl` and
 `reports/history/offline.jsonl`. The npm report scripts append each run automatically;
 `--clean-alluredir` only clears raw results. Keep the history directory between runs.
 GitHub Actions restores/saves branch-specific history caches.
+
+## Idempotency scope
+
+Live tests cover sequential identical PUTs (2/3/5), concurrent identical PUTs
+(2/4 writers), repeated DELETE, and repeated set-value PATCH. These verify
+observable booking state. Conflicting updates are a separate integrity scenario.
+Resource versions, hidden effects, key-based POST deduplication, and live server
+commit boundaries are not claimed. Eight controlled response-loss simulations
+verify that uncertain mutation outcomes are reported without blind replay.
+
+Generate measured catalog coverage after collecting each run:
+
+```sh
+python scripts/report_coverage.py --mode live
+npm run report:live
+```
+
+Use `--mode offline` for offline results. Allure includes this measured JSON and
+the scope document as global attachments. Coverage reports executed and passed
+cases separately; collected skips do not count as execution. Existing test history
+identities are retained, and additional cases appear as new tests.

@@ -11,4 +11,5 @@ export default defineConfig({
   ...base,
   historyPath: `./reports/history/${mode}.jsonl`,
   appendHistory: true,
+  globalAttachments: ["./docs/idempotency-coverage.md", `./reports/${mode}/coverage.json`],
 });

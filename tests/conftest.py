@@ -7,6 +7,7 @@ from pathlib import Path
 import allure
 import pytest
 from booker_qa.evidence import EvidenceCollector
+from reporting import attach_json, render_events
 from booker_qa.bookings import BookingRegistry
 from booker_qa.client import BookerClient
 from booker_qa.config import Settings
@@ -20,6 +21,13 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         feature, requirement = feature_for(item)
         live = "live" in item.keywords
+        if "test_idempotency" in str(item.path) or "put_three" in item.name:
+            item.add_marker(allure.label("scenario_type", "identical-request-idempotency"))
+            item.add_marker(allure.label("observability", "API-visible booking state"))
+        elif "conflicting" in item.name:
+            item.add_marker(allure.label("scenario_type", "conflicting-update-integrity"))
+        elif "commit_boundary_simulation" in str(item.path):
+            item.add_marker(allure.label("scenario_type", "response-loss-simulation"))
         gap = "business_gap" in item.keywords
         for name, value in [("epic", "Space42 API Assessment"), ("feature", feature),
                             ("requirement", requirement), ("parentSuite", "Live API" if live else "Controlled tests"),
@@ -38,8 +46,10 @@ def settings():
 
 
 @pytest.fixture
-def api(settings):
+def api(settings, request):
     collector = EvidenceCollector()
+    state = {"collector": collector, "cursor": 0}
+    request.node._http_evidence = state
     client = BookerClient(settings, observer=collector)
     try:
         yield client
@@ -47,7 +57,9 @@ def api(settings):
         try:
             events = collector.snapshot()
             if events:
-                allure.attach(json.dumps(events, indent=2), "Sanitized HTTP attempts", allure.attachment_type.JSON)
+                with allure.step("Remaining HTTP and lifecycle evidence (including teardown)"):
+                    state["cursor"] = render_events(events, state["cursor"])
+                attach_json("Sanitized HTTP attempts", sorted(events, key=lambda event: event.get("timestamp_ns", 0)))
         finally:
             client.close()
 
@@ -79,7 +91,11 @@ def booking(registry):
 
 def feature_for(item):
     name = item.originalname or item.name
-    if "test_evidence" in str(item.path) or "test_allure" in str(item.path):
+    if "test_idempotency" in str(item.path):
+        return "Idempotency", "REQ-3"
+    if "commit_boundary_simulation" in str(item.path):
+        return "Safe Retry", "REQ-3"
+    if any(name in str(item.path) for name in ["test_evidence", "test_allure", "test_coverage_reporting"]):
         return "Reporting Integrity", "FRAMEWORK-REPORTING"
     if "auth" in str(item.path) or "token" in name:
         return "Authentication", "REQ-1"
@@ -98,6 +114,18 @@ def feature_for(item):
 def report_context(request):
     name = (request.node.originalname or request.node.name).removeprefix("test_").replace("_", " ").capitalize()
     allure.dynamic.title(name + (" [" + request.node.name.split("[", 1)[1] if "[" in request.node.name else ""))
+    if "test_idempotency" in str(request.node.path) or "put_three" in request.node.name:
+        allure.dynamic.description("Verifies repeated identical requests preserve API-visible booking state. "
+                                   "Response validation is a separate contract check. Hidden business effects, "
+                                   "resource-version stability, and server operation counts are unmeasured. "
+                                   "Set-value PATCH conclusions apply only to that operation.")
+    elif "conflicting" in request.node.name:
+        allure.dynamic.description("Conflicting writes test collision integrity, not identical-request idempotency. "
+                                   "Either complete candidate may win; no partial payload merge is permitted.")
+    elif "commit_boundary_simulation" in str(request.node.path):
+        allure.dynamic.description("Controlled MockTransport response loss before/after a simulated commit. "
+                                   "Verifies client uncertainty and no blind mutation replay. "
+                                   "Does not prove live server transactions, rollback, or deduplication.")
     if "invalid_token" in request.node.name:
         allure.dynamic.tag("simulated-expiry")
         allure.dynamic.description("Live protected request with a deliberately invalid token simulates expiry. "
@@ -126,3 +154,28 @@ def pytest_sessionfinish(session, exitstatus):
             f"Execution={'live' if session.config.getoption('live') else 'offline'}\nWorkers={workers}\n"
             f"Pytest.exit_code={int(exitstatus)}\nTarget.host={hostname}\nGit.commit={commit} (working tree)\n"
         )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    state = getattr(item, "_http_evidence", None)
+    if state:
+        state["collector"].phase = "call"
+    yield
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item):
+    state = getattr(item, "_http_evidence", None)
+    if state:
+        state["collector"].phase = "teardown"
+    yield
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    yield
+    state = getattr(item, "_http_evidence", None)
+    if call.when == "call" and state:
+        with allure.step("Recorded request → response evidence (actual timings attached)"):
+            state["cursor"] = render_events(state["collector"].snapshot(), state["cursor"])

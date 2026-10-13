@@ -1,6 +1,7 @@
 import pytest
 from booker_qa.client import BookerClient
 from booker_qa.data import booking_payload
+from reporting import attach_json, compare, response_body
 
 pytestmark = pytest.mark.live
 
@@ -16,6 +17,7 @@ def test_sandbox_accepts_duplicate_booking(registry, settings):
     try:
         second, body = registry.create(payload, client=second_client)
         assert second.booking_id != first.booking_id
+        compare("Duplicate booking response payload", payload, body)
         assert body == payload
     finally:
         second_client.close()
@@ -29,6 +31,7 @@ def test_sandbox_retains_invalid_business_values(registry, invalid):
     else:
         payload["totalprice"] = -1
     _, body = registry.create(payload)
+    compare("Sandbox invalid-value characterization", payload, body)
     assert body == payload
 
 
@@ -40,9 +43,13 @@ def test_business_duplicate_rejection(registry):
     response = registry.client.request("POST", "/booking", json=payload)
     if response.status_code == 200:
         registry.ids.append(response.json()["bookingid"])
+    attach_json("Business gap: duplicate rejection", {"expected_statuses": [400, 409],
+                "actual_status": response.status_code, "actual_body": response_body(response),
+                "classification": "known business gap" if response.status_code == 200 else "review response"})
     # Transport/server failures are failures, not expected business gaps.
     assert response.status_code in {200, 400, 409}, "Unexpected API failure"
     if response.status_code == 200:
+        compare("Accepted booking matches submitted payload", payload, response.json()["booking"])
         assert response.json()["booking"] == payload
         raise UnsupportedBusinessRule("Duplicate was accepted")
 
@@ -59,7 +66,11 @@ def test_business_invalid_values_rejected(registry, invalid):
     response = registry.client.request("POST", "/booking", json=payload)
     if response.status_code == 200:
         registry.ids.append(response.json()["bookingid"])
+    attach_json("Business gap: invalid value rejection", {"invalid_case": invalid,
+                "expected_statuses": [400, 409, 422], "actual_status": response.status_code,
+                "actual_body": response_body(response)})
     assert response.status_code in {200, 400, 409, 422}, "Unexpected API failure"
     if response.status_code == 200:
+        compare("Accepted booking matches submitted payload", payload, response.json()["booking"])
         assert response.json()["booking"] == payload
         raise UnsupportedBusinessRule("Invalid business value was accepted")
