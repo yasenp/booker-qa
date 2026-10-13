@@ -1,0 +1,12 @@
+{
+  "name": "Space42 API Assessment",
+  "plugins": {
+    "awesome": {
+      "options": {
+        "reportName": "Space42 API Assessment",
+        "singleFile": true,
+        "reportLanguage": "en"
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "booker-qa-reports",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "allure": "3.20.1"
+  },
+  "scripts": {
+    "report:offline": "ALLURE_RUN_MODE=offline allure generate reports/offline/allure-results --output reports/offline/html",
+    "report:live": "ALLURE_RUN_MODE=live allure generate reports/live/allure-results --output reports/live/html"
+  }
+}

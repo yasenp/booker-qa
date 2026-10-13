@@ -1,0 +1,61 @@
+name: API assessment tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      live:
+        description: Run the public sandbox suite
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/cache/restore@v4
+        with:
+          path: reports/history
+          key: ${{ runner.os }}-allure3-history-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-allure3-history-${{ github.ref_name }}-
+      - run: npm ci --ignore-scripts
+      - run: python -m pip install -r requirements.lock.txt
+      - run: python -m pip install --no-deps -e '.[test]'
+      - run: python -m pytest -n 2 --junitxml=reports/offline.xml --alluredir=reports/offline/allure-results --clean-alluredir
+      - if: github.event_name == 'workflow_dispatch' && inputs.live
+        env:
+          BOOKER_TIMEOUT_SECONDS: '30'
+        run: python -m pytest --live -n 2 --junitxml=reports/live.xml --alluredir=reports/live/allure-results --clean-alluredir
+      - name: Generate offline Allure 3 report
+        id: offline_report
+        if: always()
+        run: npm run report:offline
+      - name: Generate live Allure 3 report
+        id: live_report
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.live
+        run: npm run report:live
+      - uses: actions/cache/save@v4
+        if: always() && (steps.offline_report.outcome == 'success' || steps.live_report.outcome == 'success')
+        with:
+          path: reports/history
+          key: ${{ runner.os }}-allure3-history-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: reports/
