@@ -1,5 +1,8 @@
 # Test case catalog
 
+For a scenario-first view with explicit implementing files and all collected case
+IDs, use the [scenario-to-file map](test-scenarios.md).
+
 This catalog covers all 88 test functions and 331 collected cases:
 39 live functions (135 cases) and 49 controlled functions
 (196 cases). Parameterization expands a function into the cases shown below.

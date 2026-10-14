@@ -67,6 +67,25 @@
     depending on a public shared sandbox for every commit. Reports upload even
     after failures. This workflow has not been run on GitHub from this workspace.
 
+## Real token expiry
+
+Run the three real-token aging cases only against an expiry-enabled target with
+a documented absolute token lifetime. Export `BOOKER_BASE_URL`, `BOOKER_USERNAME`,
+and `BOOKER_PASSWORD` for that target, then set `TARGET_TOKEN_TTL_SECONDS` to its
+documented lifetime:
+
+```sh
+python -m pytest tests/live/test_auth_expiry.py --live \
+  --token-ttl-seconds "$TARGET_TOKEN_TTL_SECONDS" --token-expiry-grace-seconds 1
+```
+
+The option does not change server behavior. The lifetime must allow the initial
+authenticated control to finish. Tests retain the original token, wait beyond
+TTL plus grace, and verify rejection, unchanged booking state, a fresh-token
+control, and sequential/concurrent recovery. Missing TTL means an explicit skip.
+The public sandbox's inspected source has no time-based expiry check; hosted expiry
+remains unverified. [Source and observation limits](api-discovery.md#token-lifetime-and-session-policy--14-october-2026)
+
 ## Remaining operational limits
 
 The sandbox can mutate/delete records immediately after any prerequisite check.

@@ -10,6 +10,9 @@ cases) to their source and explains each scenario's type, expected behavior, and
 limits. Counts describe collected cases; dated outcomes are in
 [validation results](validation-results.md).
 
+The [scenario-to-file map](test-scenarios.md) provides a quick lookup from each
+scenario to its implementing file/function, plus every collected pytest case ID.
+
 | Assessment requirement | Evidence / test | Representation |
 | --- | --- | --- |
 | Dynamic reauthentication after 401/403 | Unit concurrent rejection tests; live invalid-token PUT | Implemented; one refresh then return final result |
