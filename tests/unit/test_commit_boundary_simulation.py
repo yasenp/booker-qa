@@ -54,7 +54,8 @@ def test_lost_response_reports_uncertainty_without_replaying_mutation(method, co
                         json=payload if method != "DELETE" else None)
     finally:
         attach_json("Controlled lost-response scenario", {
-            "evidence_type": "simulation", "failure_point": "after commit" if committed else "before commit",
+            "evidence_type": "controlled", "server_behavior": "simulated",
+            "failure_point": "after commit" if committed else "before commit",
             "method": method, "initial_state": initial, "payload": payload,
             "sent_requests": sent, "simulated_authoritative_state": state,
             "client_outcome": "uncertain; exception propagated; no mutation replay",

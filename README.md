@@ -6,11 +6,25 @@ concurrent conflicting updates, bounded recovery, and explicit sandbox gaps.
 
 ## Setup
 
+From the repository root, with Python 3.14 installed (macOS/Linux):
+
 ```sh
-source /Users/yzp/Documents/code3000/py3148/bin/activate
+python3.14 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements.lock.txt
 python -m pip install --no-deps -e '.[test]'
 ```
+
+On Windows PowerShell, replace the first two commands with the following, then
+run the same two `python -m pip install` commands:
+
+```powershell
+py -3.14 -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+For later sessions, activate the existing `.venv` before running the tests.
+The virtual environment is local to the checkout and excluded from git.
 
 Python 3.14 or later is required; validation used Python 3.14.8. Configuration uses
 environment variables listed in `.env.example`, which is not automatically loaded.

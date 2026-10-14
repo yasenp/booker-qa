@@ -1,6 +1,7 @@
 # Validation results — 13 October 2026
 
-Runtime: `/Users/yzp/Documents/code3000/py3148/bin/python`, Python 3.14.8.
+Runtime: Python 3.14.8 in a virtual environment. See [setup](../README.md#setup)
+for commands that create a local environment in any checkout.
 
 | Run | Outcome | Report |
 | --- | --- | --- |
@@ -623,3 +624,28 @@ Results, JUnit, the generated Allure HTML, and validation.json are under
 both full-suite histories byte-for-byte: nine live and eight offline runs.
 The public sandbox was not rerun for this documentation change; previous live
 findings and coverage limits remain unchanged.
+
+## Portable setup and evidence labels — 15 October 2026
+
+README and Allure installation instructions now create a checkout-local `.venv`
+using `python3.14 -m venv .venv`, with shell activation and a Windows PowerShell
+alternative. Personal interpreter paths have been removed from the documentation.
+Creation and activation passed in a temporary directory using Python 3.14.8;
+dependency installation and Windows activation were not rerun.
+
+All offline results now use `evidence_type=controlled`, covering actual schema
+validation, real Allure subprocess integration, and tests with modeled server
+behavior. Simulation descriptions remain scoped to those models. Commit-boundary
+attachments separately identify `server_behavior=simulated` while retaining the
+broad controlled evidence type.
+
+Full offline run in the existing environment: **196 passed, 135 skipped in 2.71
+seconds**, exit code 0. All 196 offline labels are controlled, including 32 contract
+cases and 10 Allure integration cases. All eight modeled commit-failure attachments
+retain their explicit simulation field. The 135 skipped live cases retain the
+live label, without counting as executed live evidence.
+
+All 331 test history IDs and descriptions, 88 catalog source links, and 478
+attachment references were verified. Results, JUnit, generated HTML, and the audit
+are under `reports/review-portability-20261014T212412Z/`. Full-suite history bytes
+remain unchanged (nine live and eight offline runs). The sandbox was not rerun.

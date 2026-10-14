@@ -58,7 +58,7 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(allure.label("scenario_type", "real-token-expiry"))
         for name, value in [("epic", "Space42 API Assessment"), ("feature", feature),
                             ("requirement", requirement), ("parentSuite", "Live API" if live else "Controlled tests"),
-                            ("suite", feature), ("evidence_type", "live" if live else "simulated"),
+                            ("suite", feature), ("evidence_type", "live" if live else "controlled"),
                             ("tag", "behavior-verification")]:
             item.add_marker(allure.label(name, value))
     if not config.getoption("--live"):

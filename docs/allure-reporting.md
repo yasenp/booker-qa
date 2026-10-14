@@ -3,20 +3,24 @@
 The report generator is the project-local npm package `allure@3.20.1`.
 The pytest adapter is `allure-pytest==2.16.2`; its version is independent of the
 generator's major version. Node 24 is used locally and in GitHub Actions. Java
-is not required. Python remains in the existing py3148 virtual environment.
+is not required. Python uses the checkout's `.venv` virtual environment.
 
 ## Install
 
+From the repository root, with Python 3.14 and Node 24 installed (macOS/Linux):
+
 ```sh
-source /Users/yzp/Documents/code3000/py3148/bin/activate
-source "$HOME/.nvm/nvm.sh"
-nvm use
+python3.14 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements.lock.txt
 python -m pip install --no-deps -e '.[test]'
 npm ci --ignore-scripts
 ```
 
-If Node is installed without nvm, ensure Node 24 or later is on PATH instead.
+If `.venv` already exists, skip its creation and activate it. Windows PowerShell
+creation and activation commands are in [setup](../README.md#setup); the pip and
+npm commands are the same. If you use nvm, `nvm use` selects the version in
+`.nvmrc`; otherwise ensure Node 24 or later is on PATH.
 
 ## Collect and generate
 
@@ -53,8 +57,14 @@ Do not combine test and report commands in a way that discards a failing test ex
 
 Features group tests by authentication, validation, idempotency, PATCH integrity,
 concurrency, recovery, and reporting integrity. Labels record assessment requirement
-IDs and distinguish live evidence from controlled simulations. Fixture steps show
+IDs and distinguish live evidence from controlled tests. Fixture steps show
 prerequisite creation and cleanup; lifecycle steps show update and verification.
+
+The `evidence_type` label is `live` for sandbox cases and `controlled` for offline
+cases. Controlled evidence includes schema checks, real Allure subprocess
+integration tests, and tests using modeled server responses. Simulation wording
+describes the specific modeled behavior, such as token aging or commit-boundary
+response loss; it does not classify every offline check as a simulation.
 
 Each case's description comes from its test function's docstring: scenario, test
 type, expected behavior, parameter matrix, and material limits. Collection attaches
@@ -132,6 +142,12 @@ still fails the job even if report generation succeeds. Nothing is publicly publ
 ## Verified integration
 
 - Latest full offline run: 196 passed, 135 live cases skipped (331 collected).
+- Portability/evidence-label verification: all 196 offline results use
+  `evidence_type=controlled`, including 32 contract cases and 10 real Allure
+  integration cases. Eight commit-failure attachments identify only their modeled
+  `server_behavior` as `simulated`. Report:
+  `reports/review-portability-20261014T212412Z/offline/html/index.html`.
+  All 331 history IDs and both full-suite histories remain unchanged.
 - Documentation verification: all 331 result descriptions match the corresponding
   test docstrings, including skipped live cases. All 331 history IDs are unchanged
   and all 478 attachment references resolve. Report:

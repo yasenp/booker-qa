@@ -29,6 +29,10 @@ The default offline run skips live cases. Controlled tests use callbacks, MockTr
 synthetic state/clock models, or isolated pytest subprocesses. They can pass because
 an injected failure was correctly detected; that is framework evidence, not a live API pass.
 
+Allure labels offline cases `evidence_type=controlled`, including schema checks
+and real adapter subprocess integrations. Simulation descriptions apply to specific
+modeled server behavior, such as token aging and lost responses around a commit.
+
 Application and requested business-policy checks use ordinary assertions. Expected
 behavior in this catalog is the assertion contract, not a claim that the sandbox
 currently satisfies it. Auth denial can be HTTP 200 with a Bad credentials body.
