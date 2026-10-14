@@ -19,5 +19,5 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra --strict-markers --allure-no-capture"
 junit_family = "legacy"
-markers = ["live: public API tests, enabled with --live", "business_gap: strict enterprise expectations unsupported by the sandbox",
+markers = ["live: public API tests, enabled with --live",
            "requires_token_ttl: real token-aging checks requiring a documented absolute server lifetime"]

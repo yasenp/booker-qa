@@ -1,10 +1,11 @@
 import httpx
 import pytest
 
-from booker_qa.bookings import BookingRegistry
+from booker_qa.bookings import BookingHandle, BookingRegistry
 from booker_qa.client import BookerClient
 from booker_qa.config import Settings
 from booker_qa.data import booking_payload
+from booker_qa.evidence import EvidenceCollector
 
 
 def test_get_retries_transient_failure_then_returns_response():
@@ -117,7 +118,8 @@ def test_connect_failure_before_send_can_be_retried(method):
         api.close()
 
 
-@pytest.mark.parametrize("get_status", [404, 200])
+# DELETE 405 is graceful only when an independent GET proves the record is absent.
+@pytest.mark.parametrize("get_status", [404, 200, 500])
 def test_delete_405_requires_confirmed_absence(get_status):
     def respond(request):
         if request.url.path == "/auth":
@@ -132,5 +134,110 @@ def test_delete_405_requires_confirmed_absence(get_status):
         else:
             with pytest.raises(RuntimeError, match="HTTP 405"):
                 registry.cleanup()
+    finally:
+        api.close()
+
+
+# An available prerequisite must retain its ID and payload without an unnecessary replacement.
+def test_available_prerequisite_is_reused():
+    payload = booking_payload()
+    requests = []
+
+    def respond(request):
+        requests.append((request.method, request.url.path))
+        if request.method == "POST":
+            return httpx.Response(200, json={"bookingid": 1, "booking": payload})
+        return httpx.Response(200, json=payload)
+
+    api = BookerClient(Settings(), transport=httpx.MockTransport(respond))
+    registry = BookingRegistry(api)
+    try:
+        handle, _ = registry.create(payload)
+        assert registry.ensure(handle) == payload
+        assert handle.booking_id == 1
+        assert registry.ids == [1] and registry.recoveries == []
+        assert requests == [("POST", "/booking"), ("GET", "/booking/1")]
+    finally:
+        api.close()
+
+
+# Forbidden responses, server errors, timeouts, and malformed bodies must not be mistaken for a purge.
+@pytest.mark.parametrize("behavior", ["forbidden", "server_error", "timeout", "invalid_json"])
+def test_prerequisite_recovery_requires_confirmed_404(behavior):
+    payload = booking_payload()
+    requests = []
+
+    def respond(request):
+        requests.append((request.method, request.url.path))
+        if behavior == "timeout":
+            raise httpx.ReadTimeout("controlled read failure", request=request)
+        if behavior == "invalid_json":
+            return httpx.Response(200, text="invalid JSON")
+        return httpx.Response(403 if behavior == "forbidden" else 500)
+
+    api = BookerClient(Settings(), transport=httpx.MockTransport(respond), sleeper=lambda _: None)
+    registry = BookingRegistry(api)
+    registry.ids = [1]
+    handle = BookingHandle(1, payload)
+    try:
+        error = (httpx.ReadTimeout if behavior == "timeout" else
+                 ValueError if behavior == "invalid_json" else httpx.HTTPStatusError)
+        with pytest.raises(error):
+            registry.ensure(handle)
+        assert handle.booking_id == 1 and registry.ids == [1] and registry.recoveries == []
+        assert requests == [("GET", "/booking/1")] * (3 if behavior == "timeout" else 1)
+    finally:
+        api.close()
+
+
+# DELETE 404 is already successful cleanup; it needs no confirmation GET or replacement POST.
+def test_cleanup_404_is_terminal_without_recreation():
+    requests = []
+    collector = EvidenceCollector()
+
+    def respond(request):
+        requests.append((request.method, request.url.path))
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"token": "controlled-token"})
+        return httpx.Response(404)
+
+    api = BookerClient(Settings(), transport=httpx.MockTransport(respond), observer=collector)
+    registry = BookingRegistry(api)
+    registry.ids = [1]
+    try:
+        registry.cleanup()
+        assert requests == [("POST", "/auth"), ("DELETE", "/booking/1")]
+        assert registry.recoveries == []
+        results = [event for event in collector.snapshot() if event["kind"] == "cleanup_result"]
+        assert len(results) == 1
+        assert results[0]["booking_id"] == 1
+        assert results[0]["delete_status"] == 404 and results[0]["outcome"] == "already absent"
+    finally:
+        api.close()
+
+
+# An uncertain cleanup deletion must remain visible while cleanup continues for other owned records.
+def test_cleanup_transport_failure_still_attempts_remaining_ids():
+    deleted = []
+    collector = EvidenceCollector()
+
+    def respond(request):
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"token": "controlled-token"})
+        assert request.method == "DELETE"
+        deleted.append(request.url.path)
+        if request.url.path == "/booking/1":
+            raise httpx.ReadTimeout("controlled response loss", request=request)
+        return httpx.Response(201)
+
+    api = BookerClient(Settings(), transport=httpx.MockTransport(respond), observer=collector)
+    registry = BookingRegistry(api)
+    registry.ids = [1, 2]
+    try:
+        with pytest.raises(RuntimeError, match="1: ReadTimeout"):
+            registry.cleanup()
+        assert deleted == ["/booking/1", "/booking/2"]
+        results = [event for event in collector.snapshot() if event["kind"] == "cleanup_result"]
+        assert [event["outcome"] for event in results] == ["failed", "deleted"]
     finally:
         api.close()

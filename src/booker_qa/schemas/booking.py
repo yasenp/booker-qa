@@ -1,6 +1,6 @@
 """Wire shape and separately named business invariants."""
 from datetime import date
-from jsonschema import Draft202012Validator, FormatChecker
+from jsonschema import Draft202012Validator, FormatChecker, validators
 
 BOOKING_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21,8 +21,11 @@ BOOKING_SCHEMA = {
         },
     },
 }
-VALIDATOR = Draft202012Validator(BOOKING_SCHEMA, format_checker=FormatChecker())
-CREATE_VALIDATOR = Draft202012Validator({
+# Enforce the Python representation of wire integers: bool and 123.0 are not int values.
+STRICT_VALIDATOR = validators.extend(Draft202012Validator, type_checker=
+    Draft202012Validator.TYPE_CHECKER.redefine("integer", lambda checker, value: type(value) is int))
+VALIDATOR = STRICT_VALIDATOR(BOOKING_SCHEMA, format_checker=FormatChecker())
+CREATE_VALIDATOR = STRICT_VALIDATOR({
     "type": "object", "required": ["bookingid", "booking"], "additionalProperties": False,
     "properties": {"bookingid": {"type": "integer", "minimum": 1}, "booking": BOOKING_SCHEMA},
 }, format_checker=FormatChecker())

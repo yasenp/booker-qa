@@ -41,17 +41,20 @@ def pytest_collection_modifyitems(config, items):
         if "test_idempotency" in str(item.path) or "put_three" in item.name:
             item.add_marker(allure.label("scenario_type", "identical-request-idempotency"))
             item.add_marker(allure.label("observability", "API-visible booking state"))
+        elif "ordered_conflicting" in item.name:
+            item.add_marker(allure.label("scenario_type", "ordered-overwrite-control"))
         elif "conflicting" in item.name:
             item.add_marker(allure.label("scenario_type", "conflicting-update-integrity"))
+        elif "concurrent_patch" in item.name:
+            item.add_marker(allure.label("scenario_type", "concurrent-partial-update-integrity"))
         elif "commit_boundary_simulation" in str(item.path):
             item.add_marker(allure.label("scenario_type", "response-loss-simulation"))
         elif "requires_token_ttl" in item.keywords:
             item.add_marker(allure.label("scenario_type", "real-token-expiry"))
-        gap = "business_gap" in item.keywords
         for name, value in [("epic", "Space42 API Assessment"), ("feature", feature),
                             ("requirement", requirement), ("parentSuite", "Live API" if live else "Controlled tests"),
                             ("suite", feature), ("evidence_type", "live" if live else "simulated"),
-                            ("tag", "business-gap" if gap else "behavior-verification")]:
+                            ("tag", "behavior-verification")]:
             item.add_marker(allure.label(name, value))
     if not config.getoption("--live"):
         for item in items:
@@ -95,6 +98,16 @@ def api(settings, request):
 
 
 @pytest.fixture
+def independent_api(api, settings):
+    """A separate sandbox session sharing only the owning test's sanitized evidence."""
+    client = BookerClient(settings, observer=api.observer)
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+@pytest.fixture
 def registry(api, record_property):
     registry = BookingRegistry(api)
     try:
@@ -133,7 +146,7 @@ def feature_for(item):
         return "Reporting Integrity", "FRAMEWORK-REPORTING"
     if "auth" in str(item.path) or "token" in name:
         return "Authentication", "REQ-1"
-    if "conflicting" in name:
+    if "conflicting" in name or "concurrent_patch" in name:
         return "Concurrency", "REQ-4"
     if "missing_resource_mutation" in name:
         return "HTTP Error Semantics", "REQ-5"
@@ -145,7 +158,7 @@ def feature_for(item):
         return "PATCH Integrity", "REQ-3"
     if "put_three" in name:
         return "Idempotency", "REQ-3"
-    if "resilience" in str(item.path) or "prerequisite" in name or "health" in name:
+    if "resilience" in str(item.path) or "prerequisite" in name or "health" in name or "sandbox_cleanup" in name:
         return "Recovery and Isolation", "REQ-5"
     return "Validation and Sandbox Capabilities", "REQ-2"
 
@@ -159,13 +172,31 @@ def report_context(request):
                                    "Response validation is a separate contract check. Hidden business effects, "
                                    "resource-version stability, and server operation counts are unmeasured. "
                                    "Set-value PATCH conclusions apply only to that operation.")
+    elif "ordered_conflicting" in request.node.name:
+        allure.dynamic.description("Sequential A-to-B and B-to-A controls verify the sandbox overwrite policy. "
+                                   "The first response and GET complete before the second write starts. "
+                                   "Three final GETs must match the second payload. This is not a concurrent collision.")
     elif "conflicting" in request.node.name:
         allure.dynamic.description("Conflicting writes test collision integrity, not identical-request idempotency. "
-                                   "Either complete candidate may win; no partial payload merge is permitted.")
+                                   "Both writes must succeed under the sandbox's unconditional overwrite policy. "
+                                   "Either complete candidate may win and must remain identical across three GETs. "
+                                   "No partial payload merge is permitted. Server commit order and direct database "
+                                   "state are unmeasured; 409/412 are not silently accepted as optimistic locking.")
+    elif "concurrent_patch" in request.node.name:
+        allure.dynamic.description("Two synchronized threads PATCH separate fields on one owned booking. "
+                                   "Both changes must persist and all other fields must remain unchanged. "
+                                   "Each response may include its own change alone or both changes. "
+                                   "Three final GETs must return the same combined state. "
+                                   "Measured client release skew does not guarantee server-side overlap.")
     elif "commit_boundary_simulation" in str(request.node.path):
         allure.dynamic.description("Controlled MockTransport response loss before/after a simulated commit. "
                                    "Verifies client uncertainty and no blind mutation replay. "
                                    "Does not prove live server transactions, rollback, or deduplication.")
+    elif "missing_prerequisite_is_recreated" in request.node.name or "sandbox_cleanup" in request.node.name:
+        allure.dynamic.description("A separate HTTP client deletes only records created by this test, simulating "
+                                   "external sandbox interference. Missing prerequisite GETs allow one recreation; "
+                                   "cleanup accepts DELETE 404 or 405 with a confirming GET 404. "
+                                   "Post-operation state assertions do not recreate records or mask data loss.")
     if "invalid_token" in request.node.name:
         allure.dynamic.tag("simulated-expiry")
         allure.dynamic.description("Live protected request with a deliberately invalid token simulates expiry. "
@@ -174,12 +205,6 @@ def report_context(request):
         allure.dynamic.description("Uses an unchanged server-issued token before and after the configured absolute "
                                    "lifetime. Expiry probes use explicit cookies without automatic refresh. "
                                    "Requires an expiry-enabled target and its documented TTL; no TTL is inferred.")
-    if "business_gap" in request.node.keywords:
-        allure.dynamic.description("Strict enterprise expectation. A known sandbox acceptance is XFAIL, "
-                                   "which Allure displays as skipped. Infrastructure failures remain failures. "
-                                   "An unexpected pass fails pytest and requires capability-baseline review.")
-        coverage = Path(__file__).parents[1] / "docs" / "requirements-coverage.md"
-        allure.attach(coverage.read_text(), "Unsupported capabilities and requirement coverage", allure.attachment_type.TEXT)
 
 def pytest_sessionfinish(session, exitstatus):
     # Only the controller writes run metadata; workers share UUID-named result files.

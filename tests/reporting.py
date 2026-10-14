@@ -2,9 +2,10 @@
 import json
 
 import allure
+from jsonschema import ValidationError
 
 from booker_qa.evidence import json_diff, sanitize
-from booker_qa.schemas.booking import validate_contract
+from booker_qa.schemas.booking import validate_invariants
 
 
 def attach_json(name, value):
@@ -19,9 +20,14 @@ def compare(name, expected, actual):
 
 
 def assert_booking_matches(name, expected, actual):
-    """Attach evidence, then enforce wire shape and type-sensitive equality."""
+    """Attach evidence, then enforce the schema, business invariants, and exact values."""
     differences = compare(name, expected, actual)
-    validate_contract(actual)
+    try:
+        validate_invariants(actual)
+    except (ValidationError, ValueError) as error:
+        message = error.message if isinstance(error, ValidationError) else str(error)
+        attach_json("Booking contract or invariant violation", {"valid": False, "reason": message})
+        raise AssertionError(f"{name}: {message}") from error
     assert not differences, f"{name}: {differences}"
 
 

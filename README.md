@@ -24,7 +24,6 @@ settings repr; tokens are not logged. Requests time out after 15 seconds by defa
 python -m pytest                          # offline; live tests skipped
 python -m pytest --live                   # full sequential suite
 python -m pytest --live -n 2               # two isolated workers
-python -m pytest --live -m 'not business_gap'
 python -m pytest --live --junitxml=reports/results.xml
 ```
 
@@ -36,15 +35,25 @@ A 401/403 triggers one token refresh and one protected-request replay.
 ## Expected outcomes
 
 - PASS: verified live behavior or deterministic framework behavior.
-- XFAIL: a dedicated unsupported business-policy exception, with strict XPASS handling.
+- SKIP: live execution disabled, or real token expiry has no documented TTL configured.
 - FAIL/ERROR: assertions, transport exhaustion, contract violations, or cleanup failures.
 - UNSUPPORTED: explicitly listed in the coverage document; never counted as PASS.
 
-There are three strict business-gap tests: duplicate rejection, reversed-date
-rejection, and negative-price rejection.
-Each has a separate sandbox characterization check. Unexpected API errors cannot
-satisfy the expected-failure exception filter. New-login revocation is an additional
-requested policy with a normal assertion, separate from the assessment's reauthentication simulation.
+All live application and business-rule checks use normal assertions. Duplicate
+acceptance, reversed/equal dates, and negative prices fail when the required
+validation is absent. The previous XFAIL handling and acceptance characterizations
+have been removed. New-login revocation is an additional requested policy with a
+normal assertion, separate from the assessment's reauthentication simulation.
+
+Duplicate date-range rejection is a normal assertion in
+`test_capabilities.py::test_business_duplicate_rejection`: the second independently
+logged-in client must receive HTTP 400 or 409, and the original booking must remain
+unchanged. HTTP 200/201 acceptance fails pytest and appears as **failed** in Allure.
+A returned duplicate ID is tracked for cleanup and checked through GET, including
+when a rejection response also identifies a created record. The previous passing
+duplicate-acceptance characterization has been removed. Dates are calculated as
+today + 30 days, with checkout three days later. Both sessions use the sandbox
+account; the API has no room identifier or distinct-user booking ownership.
 
 Seven source-backed API defects have also been reproduced on the hosted sandbox.
 The original ten live regression cases cover date filters, nested PATCH preservation, invalid
@@ -56,7 +65,6 @@ See [the discovery evidence](docs/api-discovery.md).
 
 ```sh
 python -m pytest tests/live/test_filters.py tests/live/test_validation.py tests/live/test_lifecycle.py --live
-python -m pytest --live -m 'not business_gap'
 ```
 
 Source-review scenarios additionally cover missing/invalid credentials and tokens,
@@ -67,6 +75,17 @@ The identifier-collision case registers the owned destination ID twice before th
 mutation so both records can be cleaned up if the API accepts the forbidden change.
 The AUTH-01 through AUTH-11 and BOOK-01 through BOOK-07 mapping is in
 [requirements coverage](docs/requirements-coverage.md).
+
+Deep validation in `test_validation.py` covers POST, PUT, and PATCH with invalid
+integer prices, boolean flags, nested objects, and calendar/date formats. POST and
+PUT require both dates; partial nested PATCH is checked separately for preservation.
+Successful response/GET comparisons also enforce `checkout > checkin` and a
+nonnegative integer total. Zero price and both boolean values are valid controls.
+Four complete write/read workflows calculate `stay nights * test nightly rate`
+and verify that the API preserves the expected total and deposit flag. This checks
+client-calculated test data and persistence: the API exposes no rate/tax inputs
+or server pricing formula. The supported wire date format is `YYYY-MM-DD`, not
+a timestamp. Malformed calendar dates and timestamps fail strict validation.
 
 ## Architecture
 
@@ -81,9 +100,18 @@ The AUTH-01 through AUTH-11 and BOOK-01 through BOOK-07 mapping is in
 
 Threaded writers share a thread-safe httpx client and one auth manager. pytest-xdist
 process workers have independent state. A barrier coordinates conflicting writes;
-the final record must match one complete candidate, without partial merges. The
-winning request can vary. JUnit properties record client release skew, winning
-payload, owned booking IDs, and prerequisite recoveries.
+conflicting PUTs and same-field PATCHes must leave one complete candidate without
+corrupting other fields. Separate-field PATCHes must preserve both changes, detecting
+lost updates. The winning conflicting request can vary. JUnit properties record
+client release skew, winning payload, owned booking IDs, and prerequisite recoveries.
+The new PATCH scenarios also record distinct thread IDs and both outcomes in Allure;
+client release timing does not establish exact server arrival or execution overlap.
+All three concurrent-write scenarios reconcile three subsequent GETs and require
+the same complete state on every read. Reports record the expected policy and both
+write statuses; unexpected 409/412 responses fail. Ordered A→B and B→A PUT controls
+verify that the second write wins when order is known, consistent with the sandbox's
+last-write-wins behavior. Concurrent commit order, direct database state, and
+optimistic locking remain unverified; no version precondition contract is exposed.
 
 Creation validates the POST status, envelope, positive integer ID, and nested
 booking before returning the handle. IDs are registered before response validation
@@ -99,6 +127,11 @@ record needs a different response-contract assertion, even if its final state is
 Prerequisite GET 404 permits one recreation. Post-operation assertions do not
 recreate records. Cleanup accepts DELETE 404; sandbox DELETE 405 is accepted only
 when a confirming GET returns 404. Other cleanup failures remain visible.
+Live hygiene tests use an independent HTTP client to remove an owned prerequisite,
+verify that recreation permits a successful PUT/GET, and clean up a mixture of
+already-absent and remaining records. Cleanup never creates replacements and
+continues through all tracked IDs. Recovery/cleanup evidence includes original
+and replacement IDs, response statuses, and confirmed absence.
 
 ## Review material
 
@@ -125,8 +158,8 @@ npm run report:live
 
 Open `reports/live/html/index.html` directly in a browser. For an offline report,
 use `reports/offline/allure-results` and `npm run report:offline`.
-Allure shows application assertion failures as failed and XFAIL business gaps as skipped;
-pytest still enforces strict XPASS for those unsupported policies. Reports contain numbered request/response steps with sanitized payloads and headers,
+Allure shows application and business-rule assertion failures as failed. Current
+live tests have no XFAIL classification. Reports contain numbered request/response steps with sanitized payloads and headers,
 field-level expected/actual differences, PUT/PATCH summaries, concurrency reconciliation,
 retry/authentication events, cleanup/recovery details, and environment metadata.
 See [the reporting guide](docs/allure-reporting.md) for installation and validation.

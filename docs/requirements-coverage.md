@@ -1,8 +1,8 @@
 # Requirements coverage and sandbox gaps
 
 PASS describes actual verified behavior. Application defects produce ordinary
-assertion failures. Strict XFAIL is reserved for the previously agreed unsupported
-business-policy expectations; infrastructure failures remain visible.
+assertion failures. Business-rule rejection checks also use ordinary assertions;
+no live tests retain XFAIL handling. Infrastructure failures remain visible.
 UNSUPPORTED below means the API lacks the required concept, not a passing test.
 
 | Assessment requirement | Evidence / test | Representation |
@@ -11,11 +11,11 @@ UNSUPPORTED below means the API lacks the required concept, not a passing test.
 | Concurrent token generation | Unit eight-thread single-flight with a blocked issuer and bounded waits; live four-thread setup counts logical auth requests and successful issuance | Implemented within each worker process; pre-send retries retain one logical request ID |
 | Token expiry / validity check | Controlled rejection responses; live invalid token; three real-token aging scenarios in test_auth_expiry.py | Actual expiry scenarios require a documented --token-ttl-seconds and expiry-enabled target; explicitly skipped without that contract, so hosted expiry is not claimed |
 | Previous token after another client logs in | Two independent clients, same credentials, raw-cookie protected PUT checks | Direct assertion for the user-requested single-session revocation policy; fails when old token is accepted; not a time-based expiry test |
-| Duplicate date-range attempt, second context | Live duplicate test uses a separate HTTP client | PASS for observed acceptance; strict rejection XFAIL |
+| Duplicate date-range attempt, second context | test_business_duplicate_rejection calculates dates and uses two HTTP clients with independent logins/token cookies; checks original state and any returned duplicate ID through GET | Direct 400/409 assertion; acceptance FAILS and rejection passes; same sandbox account, not distinct users |
 | Same room, second owner | No room or owner fields / account provisioning contract | UNSUPPORTED |
-| Nested JSON, price type, deposit boolean, date format | POST envelope/ID validation, successful booking response and GET schemas, type-sensitive comparisons, controlled type-drift regressions | Implemented; YYYY-MM-DD matches API contract; business invariants checked separately |
-| Checkout greater than checkin | Generated data and invariant validator; live negative probe | Local invariant PASS; server rejection strict XFAIL |
-| Price calculations | Integer/nonnegative invariant, PUT/PATCH persistence | Rate/tax calculation UNSUPPORTED; negative-price rejection XFAIL |
+| Nested JSON, price type, deposit boolean, date format | Strict integer/boolean schema, required nested dates, calendar format checks, successful response/GET invariants; negative POST/PUT/PATCH matrix | Implemented; YYYY-MM-DD matches API contract; type coercion and malformed calendar values are rejected by the assertions |
+| Checkout greater than checkin | Generated data, common comparison invariant, and reversed/equal date cases for POST/PUT/PATCH | Direct negative assertions; acceptance FAILS without XFAIL |
+| Price calculations | Nonnegative strict integer total; four client-derived totals across POST/PUT/PATCH/GET, plus negative-price/type probes | Client arithmetic and exact persistence verified; server rate/tax calculation UNSUPPORTED because no formula/inputs exist |
 | Three identical PUTs | Original three-PUT test retained; additional repetition counts 2 and 5 | Observable state idempotency; responses checked as a separate contract |
 | Concurrent identical PUT | Two/four synchronized writers submit the same payload | Observable state idempotency; excluded from conflicting-write conclusions |
 | Repeated DELETE | Three deletions, GET 404 after each | Resource stays absent; identical status codes not required |
@@ -26,22 +26,39 @@ UNSUPPORTED below means the API lacks the required concept, not a passing test.
 | Date search boundaries/direction | test_filters.py uses unique guest-scoped before/equal/after thresholds | API-001/002: direct membership assertions fail on documentation mismatches |
 | Invalid-input validation | test_validation.py checks invalid PATCH types and incomplete POST; test_filters.py checks malformed dates, with positive controls | API-004/005/006: direct client-error and state-preservation assertions |
 | Missing-resource mutation status | test_lifecycle.py checks PUT/PATCH/DELETE after controlled deletion, each followed by GET 404 | API-007: direct status assertion fails on 405; resource-state DELETE idempotency still holds |
-| Simultaneous conflicting updates | Two-thread barrier, three independent rounds | Implemented; actual client start skew reported |
-| Collision reconciliation | Both PUT outcomes and type-sensitive final full-payload membership | Final winner may vary; per-writer response equality is a separate sandbox response-contract assumption |
+| Simultaneous conflicting updates | Two-thread barrier: three PUT rounds plus a conflicting totalprice PATCH scenario | Implemented; actual client start skew reported |
+| Collision reconciliation | Both writes must return 200; three GETs must match the same complete candidate with strict types/invariants | Explicit overwrite-policy expectation; rejects partial merges, unchanged state, drift, and unexpected 409/412; per-writer response equality remains a separate contract assertion |
+| Concurrent same-field PATCH | test_conflicting_patch_preserves_one_price_and_untouched_fields | Both responses succeed and reflect their submitted price; final full record matches either candidate, preserving untouched fields |
+| Concurrent separate-field PATCH | test_concurrent_patch_preserves_both_independent_changes | Price and lastname changes both persist; each response may contain its own change alone or both; unrelated fields remain unchanged |
 | Exact same-millisecond server arrival | Network scheduling and server timestamps unavailable | UNSUPPORTED as a guarantee; barrier approximates concurrent release |
-| Optimistic locking / deterministic winner | No documented version preconditions | UNSUPPORTED; deterministic integrity predicate instead |
-| Dirty-state GET recovery | One prerequisite recreation; controlled exhaustion test | Implemented; recovery IDs recorded |
-| Dirty-state DELETE handling | 404 accepted; 405 accepted only with confirming GET 404 | Implemented; no creation during teardown |
+| Ordered overwrite policy | test_ordered_conflicting_put_uses_last_completed_write, A_then_B / B_then_A | First response and confirming GET precede the second write; all three final GETs must equal the second payload |
+| Optimistic locking | No documented version preconditions; tests send unconditional writes | UNVERIFIED; a 409/412 alone is not evidence of version-based conflict detection and fails the configured overwrite expectation |
+| Predetermined winner during a true collision | Server commit order is not exposed | UNSUPPORTED as a guarantee; either writer may win but three observations must preserve that complete result |
+| Direct final database state | No sandbox database/audit access | UNVERIFIED; reconciliation checks API-visible persisted state during a bounded observation window |
+| Dirty-state GET recovery | test_missing_prerequisite_is_recreated: independent client deletes an owned ID; ensure recreates once; protected PUT and GET succeed on the replacement | Implemented; original/replacement IDs tracked and cleaned up; repeated missing state exhausts the bounded recovery visibly |
+| Dirty-state DELETE handling | test_sandbox_cleanup_handles_external_purge plus controlled 404/405 cases | Missing cleanup records are successful absence; 405 requires GET 404; remaining IDs are attempted and cleanup never creates replacements |
 | Safe retry | Bounded read retries and pre-send connection retries | No ambiguous read/write retries for mutations |
 | Lost response before/after commit | Eight method/failure-point combinations using a local model | Client behavior SIMULATED; live commit-boundary coverage unsupported |
 | Idempotency-Key deduplication | No documented key semantics or authoritative operation-count endpoint | UNSUPPORTED; production prerequisites documented |
 
-Known business-gap tests live in `tests/live/test_capabilities.py`. They raise
-dedicated exceptions only after verifying the specific unsupported behavior.
+Duplicate, reversed/equal-date, and negative-price rejection checks have no XFAIL
+markers. Their passing acceptance characterizations and business-gap marker/hooks
+have been removed so correct rejection passes normally. Date and price invariants
+now live in `tests/live/test_validation.py`, parametrized across all three writes.
+The duplicate scenario uses a cross-session workflow: calculate check-in as
+today + 30 days and checkout as check-in + 3 days, create through context A, then
+submit the identical payload through independently logged-in context B. Each
+client sends its own token cookie. Reports record the dates, distinct-session
+check, booking IDs, responses, and scope without token values. Original state
+must remain unchanged and the response must be 400 or 409. A returned new ID is
+registered before assertions; GET records whether a duplicate exists. A 400/409
+response that identifies a still-accessible duplicate also fails. The API exposes
+no authoritative operation count; this does not prove the absence of hidden effects.
+The sandbox exposes one account and no room field, and POST does not enforce
+booking ownership. These sessions therefore cannot establish different-user or
+same-room overlap enforcement. No synthetic room field is added to the payload.
 New-login revocation in `tests/live/test_auth_sessions.py` is an additional requested
 policy with a normal assertion, not a requirement for time-based expiry or assessment reauthentication.
-`xfail(strict=True)` produces a failing XPASS if rejection starts working; update
-the capability baseline deliberately when that happens.
 
 No mock result is evidence that the live API enforces an enterprise business rule.
 Real-token aging tests use a genuine issued token and wall-clock waiting when enabled.
@@ -60,6 +77,42 @@ from Allure results by `scripts/report_coverage.py` and attached to the report.
 See [scope and production extensions](idempotency-coverage.md). Conflicting writes
 are integrity tests, not identical-request idempotency tests; hidden business effects
 and server branch coverage are unmeasured.
+
+The two additional PATCH concurrency scenarios live in `tests/live/test_lifecycle.py`
+and report under REQ-4. Authentication completes before a bounded two-thread barrier.
+Thread IDs, payloads, both responses, client release skew, and final GET state are
+attached. Sixteen controlled cases run the actual assertions with both write orders
+and injected lost updates, response/persisted corruption, invalid persisted types,
+HTTP 500, and response loss. These controls verify defect detection; they do not
+establish server-side scheduling or a guaranteed same-millisecond collision.
+
+Shared reconciliation now records the expected write policy, actual statuses,
+and three final GET snapshots before validating them. Conflicting PUT/PATCH expects
+unconditional overwrite; separate-field PATCH expects both changes to survive.
+All three snapshots must match the same complete valid candidate. The first GET
+cannot be corrupt or stale and then silently replaced by a later successful read.
+The ordered PUT control establishes a known winner in both directions without
+pretending it is a simultaneous collision. Nineteen additional controlled cases
+exercise either race winner, partial merges, missing dates, type drift, ignored
+writes, unstable reads, HTTP 409/412/500, and both ordered overwrite directions.
+Repeated GETs establish observed stability, not direct database consistency or
+unbounded future stability. No winner is inferred from client response timing.
+
+Shared sandbox hygiene is tested using only records created by the current test.
+An independent HTTP client simulates an external actor with the sandbox account;
+no global reset or unrelated-resource deletion is used. Prerequisite recovery
+reuses a present record, recreates only after GET 404, updates the existing handle,
+and allows one recreation per ensure call. Recovery exhaustion remains visible.
+The live continuation check verifies a protected update and full persisted payload
+after recovery. The cleanup check mixes absent and remaining IDs, then verifies
+all are absent and that cleanup issued no booking-creation requests. Fixture
+teardown repeats cleanup safely. DELETE 404 is directly covered by a controlled
+transport; the live host returned 405, which required confirming GET 404.
+Eight added controlled cases cover present-record reuse, non-404 errors/malformed
+responses, terminal DELETE 404, unsuccessful absence confirmation, and continuing
+cleanup after a transport error. Post-operation GET assertions remain strict:
+an unexplained missing result cannot be attributed to another user without evidence,
+and auto-recreating it would conceal a possible application data-loss defect.
 
 ## Implemented source-review scenarios
 
@@ -81,7 +134,7 @@ own fixtures; independent concurrent clients each have their own booking.
 | AUTH-10 Actual expiry | test_real_token_expiry_and_reauthentication[reject-expired] | Requires documented absolute TTL; skipped without configuration |
 | AUTH-11 Expiry recovery | test_real_token_expiry_and_reauthentication[refresh-sequential/refresh-concurrent] | Requires documented absolute TTL; one/four callers and one refresh |
 | BOOK-01 Nested PATCH | test_lifecycle.py::test_nested_patch_preserves_checkout | Full response/GET preservation checks |
-| BOOK-02 Invalid field types | test_validation.py::test_updates_reject_invalid_field_types and test_patch_rejects_invalid_types_without_mutation | Six invalid scalar/date cases crossed with PUT/PATCH, plus existing combined PATCH case |
+| BOOK-02 Invalid field types | test_validation.py::test_updates_reject_invalid_field_types, test_creates_reject_invalid_field_types, and test_patch_rejects_invalid_types_without_mutation | 15 scalar/date cases crossed with POST/PUT/PATCH, plus combined PATCH case |
 | BOOK-03 Internal fields | test_patch_rejects_internal_fields | bookingid collision with another owned record; meta replacement; expect rejection and unchanged records |
 | BOOK-04 Exact resource IDs | test_resource_ids_require_exact_integer | Text/fractional suffixes crossed with GET/PUT/PATCH/DELETE; no numeric-prefix access or mutation |
 | BOOK-05 Date filters | test_filters.py inclusive check-in/checkout checks | Before/equal/after thresholds, unique guest filter controls |
@@ -98,3 +151,26 @@ Controlled regressions verify that both aliased records are deleted even if PATC
 returns an error after mutating the ID. Security-assertion regressions also verify
 that HTTP 403 alone cannot hide a successful update or deletion. Token values and
 authentication request/response bodies are excluded from reporting evidence.
+
+## Deep schema and invariant validation — requirement 2
+
+| Test | Scope |
+| --- | --- |
+| test_updates_reject_invalid_field_types | 30 PUT/PATCH cases: price string/bool/fraction/null, deposit string/number/null, malformed nested date object, invalid date/timestamp, and existing invalid-name check |
+| test_creates_reject_invalid_field_types | The same 15 cases at creation; unique guest data prevents duplicate rejection from masking input validation |
+| test_full_requests_require_both_dates | Four POST/PUT cases for missing checkin or checkout; a partial nested PATCH remains a preservation scenario |
+| test_business_invalid_values_rejected | Nine cases: reversed dates, equal dates, and negative price across POST/PUT/PATCH |
+| test_calculated_price_and_deposit_round_trip | Four complete POST/PUT/PATCH/GET workflows: calculate total from stay duration and a test rate, verify zero/positive totals, toggle both boolean values, preserve dates and total during flag-only PATCH |
+| test_create_contract / test_patch_preserves_every_untouched_field / test_nested_patch_preserves_checkout | Existing full contract and scalar/nested preservation checks |
+| Unit test_contract.py | Reject malformed representations even when expected/actual bodies match; valid leap-day/year-end dates, zero price, and both boolean values pass |
+| Unit test_validation_assertions.py | 15 controlled cases verify status plus state and cleanup, including rejection responses that still create or mutate records |
+
+Schema validation uses strict Python integer types, an explicit date format checker,
+and the YYYY-MM-DD pattern. Booleans and floats, including 123.0, cannot satisfy
+the integer constraint. Both nested dates are required on complete resources.
+All successful booking comparisons enforce checkout strictly after checkin and
+a nonnegative total, even if expected and actual values happen to be identical.
+Comparison failures attach contract/invariant details and raise AssertionError.
+Negative cases collect response and subsequent GET evidence before asserting;
+returned creation IDs are registered before validation and cleaned up on failure.
+No hidden operation count or server-side rate/tax calculation is claimed.

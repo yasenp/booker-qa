@@ -1,6 +1,6 @@
 # Walkthrough and design decisions
 
-1. Start with the coverage table. Rooms, ownership, calculated prices, versions,
+1. Start with the coverage table. Rooms, ownership, server-calculated prices, versions,
    real token TTL, and exact server arrival time cannot be proven with this API.
 2. Follow configuration into BookerClient. Negative HTTP responses stay available
    to tests. Reads retry bounded transport failures and 429/502/503/504 responses.
@@ -17,12 +17,23 @@
 4. BookingRegistry tracks only created IDs. It deep-copies payloads, records a
    prerequisite's replacement ID, and permits one recreation by default. Never
    recover a post-operation assertion: doing so would conceal a failed update.
+   A live independent-client purge verifies recovery followed by a successful
+   protected PUT and confirming GET. A second live case mixes an already-deleted
+   ID with a remaining booking and checks cleanup continues without recreation.
+   DELETE 404 succeeds directly; this sandbox's 405 succeeds only after GET 404.
+   Controlled cases keep non-404 errors, exhaustion, and cleanup failures visible
+   while ensuring cleanup still attempts every owned ID.
 5. Schema validation checks types and explicit date formats. Business invariants
    enforce ordering and nonnegative price separately, because the server accepts
    values violating them. JSON Schema format checks are explicitly enabled.
    POST creation also validates the response envelope and ID. Successful response
    and persisted-state comparisons distinguish booleans from numbers and preserve
    JSON type differences; ordinary Python equality would accept `True == 1`.
+   The integer checker also rejects 123.0, and every successful comparison enforces
+   date order and nonnegative total even when the two bodies are identical.
+   POST/PUT/PATCH negative cases directly assert rejection; no business XFAIL
+   masks acceptance. Positive workflows calculate duration times a test rate and
+   verify exact persistence, without claiming a server pricing formula exists.
 6. The original PUT test retains its three persisted snapshots and historical ID.
    Additional sequential counts (2/5), concurrent identical PUTs (2/4 writers),
    repeated DELETE, and set-value PATCH verify observable state. Response equality
@@ -36,6 +47,18 @@
    Each PUT returning its submitted payload is checked as a separate sandbox
    response contract. It is stronger than the final-state integrity predicate and
    must be revisited for a backend that returns the latest concurrent writer's state.
+   Two additional PATCH scenarios check same-field conflict integrity and separate-field
+   lost updates. The former accepts either final price and requires own-update responses;
+   the latter requires both changes in the final GET while allowing intermediate response
+   snapshots. Untouched fields must survive both scenarios. Sixteen controlled cases
+   exercise either write order and verify that injected failures are detected.
+   Shared reconciliation now requires both successes and three identical final GETs.
+   The expected policy and observed statuses are explicit; a 409/412 fails instead
+   of being reclassified automatically as successful optimistic locking. Ordered
+   A-to-B/B-to-A PUT controls verify the last write wins when the ordering is known.
+   Nineteen further controlled cases detect partial merges, rejected/ignored writes,
+   missing state, type corruption, and read-to-read drift. True-race commit order
+   and direct database state remain unmeasured; GET stability has a bounded scope.
 8. pytest-xdist workers have independent clients, tokens, IDs, and fixtures.
    No filesystem token cache or global lock is required between processes.
 9. Controlled fault tests verify retry exhaustion, single-flight refresh, bad

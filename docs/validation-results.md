@@ -339,3 +339,261 @@ nine live runs and eight offline runs. All 138 previous test identities remain;
 archived in reports/archive/source-scenarios-20261014T144109Z. The audit is saved
 in reports/source-scenarios-validation.json. No service source was changed.
 Remote CI and visual browser inspection were not exercised during this update.
+
+## Duplicate booking through a second login context — 14 October 2026
+
+Both duplicate-booking tests now share the same workflow. The payload factory
+calculates check-in as today + 30 days and checkout three days later. Context A
+logs in and creates the booking; a separate HTTP client logs in independently
+and submits the identical payload with its own token cookie. Both sessions use
+the sandbox account. The API has no room identifier or distinct-user ownership,
+so this does not claim same-room enforcement across different business users.
+
+The workflow verifies that the original booking remains unchanged. When a duplicate
+is accepted, it must have a separate ID and its response and independent GET must
+match the original payload. Its ID is registered before response assertions to
+preserve cleanup even if the response is malformed. Server errors, corrupted
+original state, and invalid responses cannot count as the known business-policy XFAIL.
+
+Focused controlled validation: **17 passed in 0.03 seconds** (six new cross-session
+workflow cases and 11 existing contract cases). The new checks cover 400/409
+rejection, accepted duplicates, server errors, malformed acceptance, rejection
+that mutates the original, cookie separation, and calculated dates crossing year-end.
+
+Targeted public-sandbox run: **1 passed, 1 XFAIL in 7.51 seconds**. Each scenario
+recorded two successful independent logins with distinct tokens and identical
+booking submissions. The sandbox returned HTTP 200 for both duplicate attempts,
+so acceptance passed and the strict rejection-policy check remained XFAIL.
+All four owned bookings were deleted; all 55 attachment references resolve.
+
+The isolated report is reports/duplicate-context-20261014T193314Z/html/index.html;
+its raw results and validation audit are beside it. The previous full-suite reports
+and both history files remain unchanged. This targeted run does not replace the
+last full-suite results above.
+
+## Duplicate acceptance reported as a defect — 14 October 2026
+
+Removed the duplicate-rejection business_gap/XFAIL markers and the passing
+duplicate-acceptance characterization. The existing test identity remains
+test_business_duplicate_rejection. It asserts HTTP 400/409 directly; HTTP 200,
+HTTP 201, and server errors produce ordinary assertion failures. Error text
+under HTTP 200 does not establish a documented alternative rejection contract.
+The two remaining strict business-gap cases concern reversed dates and negative prices.
+
+The test retains calculated dates, independently authenticated client sessions,
+original-state verification, and sanitized response evidence. Returned duplicate
+IDs are registered before assertions, and GET records the duplicate's persisted
+state. Even 400/409 fails if the response identifies an accessible new booking.
+Hidden effects without a returned ID remain unmeasured.
+
+Focused controlled and reporting checks: **30 passed in 2.31 seconds**. Nine
+cross-session cases cover ordinary 400/409 rejection, 200/201 acceptance, an
+HTTP 200 error message, malformed acceptance, server errors, mutation of the
+original on rejection, and a 409 that still creates a duplicate. The other
+21 checks cover the schema/invariants and Allure status/evidence behavior.
+
+Targeted public-sandbox run: **1 failed in 5.41 seconds**, pytest exit code 1.
+The failure states: expected HTTP 400 or 409, got HTTP 200. Both independent
+logins succeeded; the same payload created booking IDs 388 and 400. GET confirmed
+the second booking was persisted and the original remained unchanged. Allure
+records failed, and JUnit records one failure with zero errors and zero skips.
+Both cleanup deletions succeeded, and all 26 attachment references resolve.
+
+The report, raw results, JUnit output, and audit are under
+reports/duplicate-rejection-20261014T194107Z. Previous full-suite reports and both
+history files remain unchanged. The targeted report was generated with the base
+Allure config to avoid adding a partial run to the full-suite histories. Diff
+checks pass. Remote CI and visual browser inspection were not exercised.
+
+## Deep schema contract and invariant validation — 15 October 2026
+
+The schema now enforces strict integer representations: strings, booleans,
+fractional values, and even integer-valued floats cannot satisfy totalprice's
+integer type. Deposit flags remain genuine booleans, nested dates are required,
+and the explicit calendar checker and YYYY-MM-DD pattern reject invalid dates
+and timestamps. Every successful booking comparison now validates logical
+invariants as well as exact values, so identical invalid expected/actual bodies
+cannot conceal a negative total or checkout <= checkin. Comparison contract and
+invariant violations attach details and raise AssertionError.
+
+Expanded live checks in test_validation.py cover 45 invalid-field combinations
+across POST/PUT/PATCH, four required-date POST/PUT cases, nine reversed/equal-date
+and negative-price cases, and four valid price/deposit round-trip workflows.
+Partial nested PATCH remains covered as an update-preservation requirement;
+missing checkout in a partial date patch is not incorrectly treated as missing
+data in a complete replacement. The former invalid-business-value acceptance
+tests, XFAIL decorators, business-gap exception, marker, and report hooks were
+removed. The duplicate rejection work from the preceding entries is retained.
+
+Negative checks collect the response and subsequent GET evidence before asserting
+the rejection code. They verify that the original booking is unchanged and any
+returned creation ID does not identify a newly persisted record on rejection.
+Unexpected created IDs are registered before assertions. Invalid POST probes
+use a different generated guest name from their valid control, preventing a
+future duplicate rule from masking a missing field validator.
+
+The four valid workflows compute expected totalprice from stay duration times a
+test nightly rate, check POST and GET, extend the stay and toggle the deposit via
+PUT, then change only the deposit via PATCH and verify that total/date values are
+preserved. Zero total and true/false flags are exercised. No nightly-rate/tax
+inputs or server pricing formula exist in this API, so these are tests of client
+calculation and exact API persistence, not evidence of server-side price arithmetic.
+
+Initial focused controlled checks: **79 passed in 0.16 seconds**. Full offline
+two-worker validation: **153 passed, 130 skipped in 2.59 seconds**, exit code 0.
+All 283 cases collected. Controlled checks include leap-day and year-end dates,
+matching-but-invalid payloads, strict numeric types, and 15 POST/PUT/PATCH models
+where rejection can incorrectly create or mutate a resource. Cleanup succeeds
+after those intentionally failing scenario assertions.
+
+Focused public-sandbox two-worker run: **13 passed, 53 failed in 87.26 seconds**,
+exit code 1. All 66 selected cases executed; there were no XFAILs, skips, setup/
+teardown errors, or broken Allure results. The selected cases included the new
+matrix plus existing create, scalar/nested PATCH, and combined invalid PATCH checks.
+
+| Selected family | Passed | Failed |
+| --- | ---: | ---: |
+| Invalid PUT/PATCH field types | 5 | 25 |
+| Invalid POST field types | 0 | 15 |
+| Required nested dates in POST/PUT | 2 | 2 |
+| Date order and nonnegative price across all writes | 0 | 9 |
+| Calculated price/deposit round trips | 4 | 0 |
+| Existing creation and scalar PATCH contract checks | 2 | 0 |
+| Existing nested/invalid-type PATCH checks | 0 | 2 |
+
+All 78 tracked cleanup deletions succeeded. The audit verified ownership of every
+returned creation ID and all 277 resource-specific requests. All 1,416 live and
+295 offline attachment references resolve. Request/response and persisted-state
+examples are summarized in api-discovery.md.
+
+Reports, raw results, JUnit files, and the validation audit are under
+reports/deep-validation-20261014T200228Z (UTC directory timestamp; local date
+15 October). Both isolated reports were generated with the base Allure config;
+the previous full-suite reports and both history files remain unchanged. The
+full live suite was not rerun; the 66 selected live results are scoped to this
+requirement. Diff checks pass. Remote CI and visual browser inspection were not
+exercised during this update.
+
+## Additional concurrent PATCH scenarios — 15 October 2026
+
+Added two live tests in test_lifecycle.py:
+
+- test_conflicting_patch_preserves_one_price_and_untouched_fields: two synchronized
+  threads submit different totalprice values. Both responses must succeed and reflect
+  their own update; final GET must match one complete candidate, preserving every
+  untouched field.
+- test_concurrent_patch_preserves_both_independent_changes: two synchronized threads
+  change totalprice and lastname separately. Both changes must survive in final GET.
+  A response may contain its own change alone or both changes, so legitimate ordering
+  does not cause a false failure. Every unrelated field remains unchanged.
+
+Authentication completes before the barrier. Allure records both thread identities,
+payloads, outcomes, final-state comparisons, and client release skew under REQ-4.
+No exact server arrival or execution overlap is claimed. Infrastructure exceptions
+remain visible and owned bookings are cleaned up by the existing registry fixture.
+
+Sixteen controlled cases exercise both write orders and inject lost updates,
+corrupted responses/persisted state, invalid persisted types, HTTP 500, and response
+loss. Full offline validation: **169 passed, 132 skipped in 2.71 seconds** (301
+collected), exit code 0. This includes all 16 new controlled cases.
+
+Focused public-sandbox validation: **5 passed in 8.31 seconds**, exit code 0.
+Both new PATCH scenarios and all three existing conflicting PUT rounds passed.
+Client release skew was 0.244542 ms for conflicting PATCH and 0.263458 ms for
+separate-field PATCH. Both use two distinct threads; neither asserts a timing
+threshold that network or scheduler jitter could make flaky.
+
+All five owned bookings were deleted successfully. The audit verified all 27
+resource-specific requests targeted owned IDs and all 143 live / 424 offline
+attachment references resolve. Reports, JUnit results, and validation.json are under
+reports/concurrent-patch-20261014T202146Z. Reports use the base Allure config;
+the nine-run live history and eight-run offline history remain byte-for-byte unchanged.
+Only the five concurrency cases were rerun live; unrelated application findings
+from the previous validation remain open.
+
+## State reconciliation and overwrite policy — 15 October 2026
+
+The three concurrent-write scenarios now share explicit policy and state checks.
+Conflicting PUT/PATCH expects unconditional last-write-wins behavior: both writes
+return HTTP 200 and the final state matches one complete candidate. Independent
+PATCHes expect both changes to survive. Every case collects three GET snapshots
+before asserting, requires HTTP 200 for each, and checks the same complete state
+with strict types and business invariants on all three reads. Mixed fields, lost
+updates, or later drift fail. Reports record policy, observed statuses, snapshots,
+candidate membership, and differences. A 409/412 is reported as an unexpected
+conflict rejection, not silently accepted as proof of optimistic locking.
+
+Added test_ordered_conflicting_put_uses_last_completed_write with A_then_B and
+B_then_A cases. The first response and a confirming GET complete before the
+second request begins. All three final GETs must equal the second payload. These
+are sequential overwrite-policy controls; the existing barrier tests remain the
+concurrent collision evidence. Nineteen new controlled cases exercise both valid
+race winners, partial merges, missing dates, invalid types, unchanged/missing
+state, drift, HTTP 409/412/500, and ignored or unstable ordered writes.
+
+Full offline run: **188 passed, 134 skipped in 2.61 seconds**, 322 collected,
+exit code 0. Focused public-sandbox run: **7 passed in 13.41 seconds**, exit code 0.
+
+| Family | Cases | Result |
+| --- | ---: | --- |
+| Conflicting concurrent PUT | 3 | Both writes accepted; one complete stable winner |
+| Conflicting price PATCH | 1 | Both writes accepted; one stable price, untouched fields preserved |
+| Independent-field PATCH | 1 | Both changes persisted in one stable complete record |
+| Ordered A→B / B→A PUT controls | 2 | WinnerB / WinnerA respectively; all final reads matched |
+
+All 21 reconciliation snapshots passed. All seven owned bookings were deleted,
+and all 53 resource-specific requests targeted owned IDs. All 239 live and 478
+offline attachment references resolve. Reports, JUnit, and validation.json are
+under reports/state-reconciliation-20261014T202926Z. Base-config report generation
+preserves both full-suite histories byte-for-byte (nine live, eight offline runs).
+
+The observed behavior is consistent with last-write-wins and with the reviewed
+source's unconditional update. Client start/response timing does not identify
+concurrent server commit order. Either race winner is valid; the expected complete
+state and its stability are checked deterministically. No version precondition
+contract or direct database access is exposed. These tests verify API-visible
+state during three reads, not direct database consistency or absence of later
+drift. Unrelated live application findings were not rerun and remain open.
+
+## Shared sandbox hygiene — 15 October 2026
+
+Existing BookingRegistry behavior already limits prerequisite GET 404 recovery
+to one recreation by default and treats DELETE 404 as successful cleanup. A
+sandbox DELETE 405 is accepted only after GET confirms 404. The implementation
+continues through every tracked ID and reports genuine cleanup failures.
+
+Strengthened test_missing_prerequisite_is_recreated to use a separate HTTP client
+for the controlled deletion, preserve original/replacement ownership, and execute
+a protected PUT plus full-state GET after recreation. Its test identity remains
+unchanged. Added test_sandbox_cleanup_handles_external_purge: create two owned
+records, remove one through the independent client, clean up both, verify no
+replacement POST occurred, and confirm both records remain absent. Fixture
+teardown repeats cleanup successfully. The setup purge also accepts already-absent
+records with a confirming GET, so an earlier external deletion is harmless.
+Both clients use the sandbox account; this simulates external interference without
+claiming different-user authorization or invoking a global reset.
+
+Eight new controlled cases verify that present prerequisites are reused, recovery
+does not reinterpret 403/500/timeouts/invalid JSON as absence, DELETE 404 needs no
+recreation, failed 405 absence confirmation stays visible, and cleanup continues
+after a DELETE response-loss error. Existing bounded-recreation and exhaustion
+checks remain in place. Post-operation GET assertions are never auto-recreated,
+because that could hide an application data-loss defect.
+
+Full offline validation: **196 passed, 135 skipped in 2.56 seconds**, 331 collected,
+exit code 0. Focused public-sandbox validation: **2 passed in 5.26 seconds**, exit
+code 0, with zero skipped, XFAIL, failed, or broken live results.
+
+The original prerequisite 3279 was replaced by 3292; both the subsequent PUT and
+GET returned 200 and matched the updated full payload. The second test owned 3280
+and 3282. All four IDs were deleted or confirmed absent. Six registry cleanup
+attempts succeeded: two DELETE 201 results and four DELETE 405 results, each of
+the latter confirmed by GET 404. Repeated fixture cleanup accounts for two of
+those absence checks. Direct DELETE 404 behavior passed in the controlled suite.
+
+The audit verified all 20 resource-specific requests targeted owned IDs and all
+81 live / 478 offline attachment references resolve. Reports, JUnit, and
+validation.json are under reports/sandbox-hygiene-20261014T203702Z. Base-config
+Allure generation preserves both full-suite histories byte-for-byte (nine live,
+eight offline runs). Only these two cases were rerun live; unrelated application
+findings remain open.

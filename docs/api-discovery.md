@@ -45,8 +45,10 @@ confirm that repeated DELETE can return 405; cleanup verifies absence with GET.
 
 ## Decisions to discuss before the remaining implementation
 
-1. Treat duplicate acceptance as an explicit sandbox capability result. A strict
-   enterprise overlap-rejection test needs a target with room inventory semantics.
+1. Initial discovery recorded duplicate acceptance as sandbox behavior. The current
+   requirement asserts rejection directly: duplicate acceptance is reported as a
+   failing assessment check. Same-room ownership remains untestable without room
+   inventory semantics.
 2. Validate date ordering and nonnegative price as client-side business invariants;
    expose the sandbox's acceptance of invalid values separately. Do not silently
    pass a test claiming server-side rejection.
@@ -111,8 +113,9 @@ deeply preserved expected booking. Corruption, missing records, transport
 errors, and server failures remain visible. Negative PATCH
 validation must leave the full booking unchanged if rejection starts working.
 
-Duplicate acceptance remains a business-policy gap because the API has no room
-inventory or owner model. API-007 concerns HTTP status semantics: repeated DELETE
+Duplicate acceptance is now reported as a normal failure against the requested
+negative-validation rule. The absence of a room inventory or owner model remains
+an explicit limit on the scope of that check. API-007 concerns HTTP status semantics: repeated DELETE
 still satisfies observable-state idempotency when subsequent GET confirms absence.
 
 ## Token lifetime and session policy — 14 October 2026
@@ -165,3 +168,63 @@ expiry remains unverified: the three aging scenarios skipped without a documente
 
 See reports/live/html/index.html for the report and
 reports/source-scenarios-validation.json for the artifact/ownership audit.
+
+## Duplicate rejection defect — assessment requirement 2
+
+The duplicate-date-range requirement now uses a direct assertion. Its earlier
+XFAIL classification and passing duplicate-acceptance test have been removed.
+No special HTTP 200 error response is documented for this negative check; the
+accepted rejection statuses are 400 and 409. An error-looking message under
+HTTP 200 does not satisfy that status contract.
+
+Reproduction on 14 October 2026: calculate check-in as today + 30 days and
+checkout three days later (2026-11-13 to 2026-11-16 in this run). Log in through
+context A and create a uniquely named booking. Log in independently through
+context B and submit the identical payload with the second session's token.
+
+- Expected: HTTP 400 or 409, with the original booking unchanged and no created duplicate.
+- Actual: HTTP 200 with a normal booking response and a new booking ID. The original
+  ID was 388 and the duplicate ID was 400. GET of the duplicate returned 200 with
+  the submitted booking; the original remained unchanged. No validation error
+  was present in the duplicate response.
+- Test: tests/live/test_capabilities.py::test_business_duplicate_rejection.
+- Result: **FAIL** in pytest, JUnit, and Allure. Both owned bookings were deleted.
+
+The assertion also fails when 400/409 identifies a new booking that GET confirms
+still exists. Hidden effects without a returned resource ID remain unmeasured.
+The test uses two authenticated sessions of the sandbox account; distinct user
+ownership and a same-room identifier remain outside the available API model.
+
+Request/response attachments and subsequent GET evidence are in
+reports/duplicate-rejection-20261014T194107Z/html/index.html. This is an isolated
+targeted run; the previous full-suite reports and history are preserved.
+
+## Deep contract and invariant findings — 15 October 2026
+
+The focused public-sandbox run executed 66 cases: **13 passed and 53 failed**.
+All failures were direct assertions, with no XFAIL, skip, or broken results.
+Reversed/equal dates and negative prices are now ordinary negative-validation
+checks in test_validation.py for POST, PUT, and PATCH. The earlier acceptance
+characterizations and business-gap exceptions have been removed.
+
+| Area | Hosted observation | Result |
+| --- | --- | --- |
+| Calculated totals and deposit flags | All four valid POST/PUT/PATCH/GET workflows preserved client-derived integer totals, both boolean values, and the expected nested dates; zero total was accepted | Four passed |
+| PUT/PATCH invalid scalar/date types | PUT rejected null price, null deposit, and null/array/string bookingdates with 400 and preserved state. All other selected invalid updates were accepted or produced a server error | Five passed, 25 failed |
+| POST invalid scalar/date types | The 15 probes returned success or a server error, never the expected 400/422 validation result | 15 failed |
+| Required nested dates | PUT returned 400 for either missing nested date and preserved the original. POST returned 500 | Two passed, two failed |
+| Logical date and price constraints | Reversed dates, equal dates, and negative prices were accepted by all three write methods | Nine failed |
+| Existing contract/preservation checks | Valid creation and scalar PATCH passed. Combined invalid-price/boolean PATCH and nested PATCH preservation failed | Two passed, two failed |
+
+Examples confirmed in both response and GET: totalprice 123.45 was truncated to
+123, numeric depositpaid 0 became false, checkout 2027-02-30 became 2027-03-02,
+and a timestamp check-in was reduced to its date portion. The strict contract
+requires integer prices, genuine boolean flags, and valid YYYY-MM-DD calendar
+dates; coercion does not satisfy input rejection. The valid pricing workflows
+prove exact preservation of calculated test inputs, not server rate/tax arithmetic.
+
+All 78 owned bookings were deleted. The audit checked all 277 resource-specific
+requests against the owning test's IDs and resolved all 1,416 live attachment
+references. Evidence and HTML reports are under
+reports/deep-validation-20261014T200228Z; timestamps in directory names are UTC,
+so the local execution date is 15 October. Existing history files were unchanged.

@@ -56,17 +56,21 @@ concurrency, recovery, and reporting integrity. Labels record assessment require
 IDs and distinguish live evidence from controlled simulations. Fixture steps show
 prerequisite creation and cleanup; lifecycle steps show update and verification.
 
-Allure's adapter represents pytest XFAIL as **skipped**, with an XFAIL explanation.
-Known enterprise expectations are tagged **business-gap** and attach the
-requirements coverage table. Ordinary offline skips say `Enable with --live`.
-Strict XPASS remains **failed** and fails pytest. Assertion failures are failed;
+Allure's adapter represents pytest XFAIL as **skipped**, with an XFAIL explanation;
+that remains relevant to historical runs and isolated adapter tests. Current live
+tests use no XFAIL markers or business-gap classification. Ordinary offline skips
+say `Enable with --live`. Strict XPASS remains **failed** in adapter tests.
+Assertion failures are failed;
 unexpected exceptions and teardown exceptions are broken. These mappings are
 verified through isolated adapter tests, not by changing actual test outcomes.
 Application checks are grouped by feature: Booking Search, Input Validation,
 PATCH Integrity, and HTTP Error Semantics. Their assertions fail on defects and
 pass when the application behaves correctly. There is no special expected-failure
-classification for application defects; the three unsupported **business-gap**
-policies retain their previously agreed handling.
+classification for application defects. Reversed/equal dates and negative prices
+now use direct assertions on POST, PUT, and PATCH.
+Duplicate acceptance has a normal 400/409 assertion and is **failed**, not XFAIL.
+Its evidence includes calculated dates, separate login contexts, the duplicate
+POST response, subsequent GET observations, and cleanup.
 
 Unsupported concepts remain entries in the attached coverage table. They are not
 invented passing tests. Invalid-token simulation is additionally tagged as simulated
@@ -95,10 +99,21 @@ Framework retry and refresh warnings also omit URL credentials, query strings,
 and fragments. Controlled tests check captured warnings as well as structured evidence.
 
 Concurrent reconciliation attaches both candidates, responses, release skew, and
-the final state. Owned booking IDs and prerequisite replacements are attached in
+the final state. Concurrent PATCH evidence also records distinct thread IDs and,
+for separate-field changes, the permitted intermediate response states. Both new
+PATCH scenarios are labeled Concurrency / REQ-4. Owned booking IDs and prerequisite replacements are attached in
 teardown even if cleanup fails. Controller-only metadata records Python, OS,
 execution mode, worker count, target host, git base commit, and pytest exit code.
 The commit is explicitly marked as a working-tree run because changes may be uncommitted.
+The **Write policy and stable state reconciliation** attachment records expected
+policy, both write statuses, three GET snapshots, candidate matches, and strict
+field differences. Ordered overwrite controls have a separate scenario label
+so their known winner is not presented as evidence of concurrent commit ordering.
+Hygiene evidence records the independent client's controlled deletion, confirming
+GET, original/replacement IDs, successful continuation after recovery, and per-ID
+cleanup outcomes. Both clients share one sanitized collector; their authentication
+bodies and token cookies remain excluded. These cases report under Recovery and
+Isolation / REQ-5.
 
 ## CI
 
@@ -109,12 +124,35 @@ still fails the job even if report generation succeeds. Nothing is publicly publ
 
 ## Verified integration
 
-- Latest offline run: 108 passed, 85 live tests skipped.
-- Latest live run with two workers: 146 passed, 41 failed (40 application checks
+- Latest full offline run: 196 passed, 135 live cases skipped (331 collected).
+- Focused sandbox-hygiene run: both live cases passed, including one recreation
+  followed by successful PUT/GET. All four owned IDs were deleted or confirmed
+  absent; six cleanup attempts succeeded, including repeated fixture cleanup.
+  All 81 live attachment references resolve. Reports:
+  `reports/sandbox-hygiene-20261014T203702Z/`; full-suite histories remain unchanged.
+- Focused state-reconciliation run: all seven selected cases passed (five concurrent
+  cases and two ordered PUT controls). Reports: `reports/state-reconciliation-20261014T202926Z/`.
+  All seven owned bookings were deleted; all 21 reconciliation snapshots were stable
+  within their respective cases. All 239 live attachment references resolve and
+  full-suite histories remain unchanged.
+- Focused concurrency run: both new PATCH scenarios and all three existing conflicting
+  PUT cases passed. Reports: `reports/concurrent-patch-20261014T202146Z/`.
+  All five owned bookings were deleted, all 143 live attachment references resolve,
+  and full-suite histories remain unchanged.
+- Latest focused live deep-validation run: 13 passed, 53 failed, zero skipped,
+  XFAIL, or broken results across 66 cases. Both reports are under
+  `reports/deep-validation-20261014T200228Z/`; 15 October local date, UTC directory timestamp.
+  All 78 owned-booking deletions succeeded and all 1,416 live attachment references
+  resolve. These isolated reports leave full-suite histories unchanged.
+- Targeted duplicate-rejection rerun: one ordinary failure, zero skipped or broken
+  results. The sandbox returned HTTP 200 and persisted the duplicate. Report:
+  `reports/duplicate-rejection-20261014T194107Z/html/index.html`.
+- Last full offline run, before the duplicate-rejection update: 108 passed, 85 live tests skipped.
+- Last full live run, before that update, with two workers: 146 passed, 41 failed (40 application checks
   and the requested revocation policy), three missing-TTL skips, and three strict
   XFAIL business-policy gaps. Pytest exits with status 1.
 - The 48 new source-review scenarios produced 18 passes and 30 assertion failures.
-- Both runs collect all 193 cases with the default pytest import configuration.
+- Those full runs collected 193 cases with the default pytest import configuration.
 - History retains all previous bytes and adds one run per mode: nine live and
   eight offline runs. All 2,037 live attachment references resolve.
 - Status tests cover PASS, ordinary skip, XFAIL, strict XPASS, assertion failure,
@@ -172,7 +210,9 @@ remain redacted even when differences are displayed.
 - Concurrency: both writer outcomes even if one fails, final state, matching candidate,
   per-candidate differences, and client release skew. Worker exceptions retain their
   original failure classification after outcomes are attached.
-- Business gaps: expected rejection codes, actual response, and known-gap context.
+- Deep validation: expected rejection codes, invalid field/date case, response,
+  original and newly created resource state, strict schema/invariant violations,
+  and the scope of client-derived price calculations.
 - Retry: triggering HTTP status or error class, next attempt, and backoff duration.
 - Authentication: token acquired and refresh-trigger events; token values are omitted.
 - Recovery: original/replacement IDs and bounded-recovery exhaustion events.
