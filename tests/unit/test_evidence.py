@@ -1,11 +1,46 @@
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
+import pytest
 
 from booker_qa.client import BookerClient
 from booker_qa.config import Settings
 from booker_qa.evidence import EvidenceCollector, json_diff, sanitize
+
+
+# Retry and refresh warnings must omit URL credentials, query strings, and fragments.
+@pytest.mark.parametrize("failure", ["connect", "503", "401", "403"])
+def test_warning_logs_exclude_url_secrets(caplog, failure):
+    caplog.set_level(logging.WARNING, logger="booker_qa.client")
+    collector = EvidenceCollector()
+    calls = []
+
+    def respond(request):
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"token": "issued-secret"})
+        calls.append(1)
+        if len(calls) == 1:
+            if failure == "connect":
+                raise httpx.ConnectTimeout("exception-secret", request=request)
+            return httpx.Response(int(failure))
+        return httpx.Response(200)
+
+    api = BookerClient(Settings(), transport=httpx.MockTransport(respond),
+                       observer=collector, sleeper=lambda _: None)
+    try:
+        path = "https://url-user:url-password@example.test/booking/1?token=query-secret#fragment-secret"
+        response = api.request("GET", path, authenticated=failure in {"401", "403"})
+        assert response.status_code == 200
+        assert len(calls) == 2
+        assert len(caplog.records) == 1
+        assert "/booking/1" in caplog.text
+        evidence = caplog.text + json.dumps(collector.snapshot())
+        for secret in ["url-user", "url-password", "query-secret", "fragment-secret", "issued-secret", "exception-secret"]:
+            assert secret not in evidence
+    finally:
+        api.close()
 
 
 def test_auth_bodies_headers_and_query_secrets_never_enter_evidence():
@@ -29,6 +64,7 @@ def test_auth_bodies_headers_and_query_secrets_never_enter_evidence():
         api.close()
 
 
+# Concurrent event collection must lose no events and return an independent snapshot.
 def test_collector_keeps_all_thread_events_and_snapshot_is_detached():
     collector = EvidenceCollector()
     with ThreadPoolExecutor(max_workers=8) as pool:

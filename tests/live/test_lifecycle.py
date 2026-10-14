@@ -1,13 +1,15 @@
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+from datetime import date, timedelta
 from threading import Barrier
 from time import perf_counter_ns
 
 import allure
 import pytest
 
-from booker_qa.schemas.booking import validate_invariants
+from booker_qa.schemas.booking import validate_contract, validate_invariants
 from booker_qa.evidence import json_diff
-from reporting import attach_json, compare, response_body
+from reporting import assert_booking_matches, attach_json, compare, response_body
 
 pytestmark = pytest.mark.live
 
@@ -17,14 +19,15 @@ def persisted(api, handle):
     response = api.request("GET", f"/booking/{handle.booking_id}")
     compare("Persisted GET status", 200, response.status_code)
     assert response.status_code == 200
-    return response.json()
+    body = response.json()
+    validate_contract(body)
+    return body
 
 
 def test_create_contract(api, booking):
     body = persisted(api, booking)
-    compare("Created booking contract and invariants: expected vs actual", booking.payload, body)
+    assert_booking_matches("Created booking contract and invariants: expected vs actual", booking.payload, body)
     validate_invariants(body)
-    assert body == booking.payload
 
 
 def test_put_three_times_is_idempotent(api, booking):
@@ -40,14 +43,12 @@ def test_put_three_times_is_idempotent(api, booking):
         with allure.step(f"Apply identical PUT and read persisted state: iteration {iteration + 1}"):
             response = api.request("PUT", f"/booking/{booking.booking_id}", json=payload, authenticated=True)
             compare(f"PUT {iteration + 1}: status", 200, response.status_code)
-            compare(f"PUT {iteration + 1}: response payload", payload, response_body(response))
             assert response.status_code == 200
-            assert response.json() == payload
+            assert_booking_matches(f"PUT {iteration + 1}: response payload", payload, response_body(response))
             snapshot = persisted(api, booking)
-            compare(f"PUT {iteration + 1}: persisted state", payload, snapshot)
+            assert_booking_matches(f"PUT {iteration + 1}: persisted state", payload, snapshot)
             snapshots.append(snapshot)
-    compare("Idempotency summary: three persisted snapshots", [payload] * 3, snapshots)
-    assert snapshots == [payload] * 3
+    assert not compare("Idempotency summary: three persisted snapshots", [payload] * 3, snapshots)
 
 
 def test_patch_preserves_every_untouched_field(api, booking):
@@ -56,9 +57,8 @@ def test_patch_preserves_every_untouched_field(api, booking):
     response = api.request("PATCH", f"/booking/{booking.booking_id}", json={"totalprice": 777}, authenticated=True)
     expected = {**before, "totalprice": 777}
     compare("PATCH status", 200, response.status_code)
-    compare("PATCH response: expected vs actual", expected, response_body(response))
     assert response.status_code == 200
-    assert response.json() == expected
+    assert_booking_matches("PATCH response: expected vs actual", expected, response_body(response))
     with allure.step("Verify every unreferenced field is unchanged"):
         after = persisted(api, booking)
         differences = json_diff(before, after)
@@ -68,8 +68,48 @@ def test_patch_preserves_every_untouched_field(api, booking):
             "untouched_fields_match": not json_diff({k:v for k,v in before.items() if k != "totalprice"},
                                                     {k:v for k,v in after.items() if k != "totalprice"}),
         })
-        compare("PATCH persisted state: expected vs actual", expected, after)
-        assert after == expected
+        assert_booking_matches("PATCH persisted state: expected vs actual", expected, after)
+
+
+# Updating only check-in must preserve checkout and every other unreferenced field.
+def test_nested_patch_preserves_checkout(api, booking):
+    before = persisted(api, booking)
+    assert_booking_matches("Nested PATCH baseline", booking.payload, before)
+    checkin = (date.fromisoformat(before["bookingdates"]["checkin"]) + timedelta(days=1)).isoformat()
+    expected = deepcopy(before)
+    expected["bookingdates"]["checkin"] = checkin
+    response = api.request("PATCH", f"/booking/{booking.booking_id}",
+                           json={"bookingdates": {"checkin": checkin}}, authenticated=True)
+    # Read independently before asserting so both response and persisted corruption are reported.
+    after = api.request("GET", f"/booking/{booking.booking_id}")
+    actual = {"patch_status": response.status_code, "response": response_body(response),
+              "get_status": after.status_code, "persisted": response_body(after)}
+    differences = compare("Nested PATCH response and persisted state",
+                          {"patch_status": 200, "response": expected, "get_status": 200, "persisted": expected}, actual)
+    assert not differences, f"Nested PATCH must preserve untouched booking fields: {differences}"
+    validate_contract(actual["response"])
+    validate_contract(actual["persisted"])
+
+
+# Supported mutation routes must report a missing booking correctly and leave it absent.
+@pytest.mark.parametrize("method", ["PUT", "PATCH", "DELETE"])
+def test_missing_resource_mutation_reports_absence(api, booking, method):
+    path = f"/booking/{booking.booking_id}"
+    assert api.request("DELETE", path, authenticated=True).status_code == 201
+    assert api.request("GET", path).status_code == 404
+    kwargs = {} if method == "DELETE" else {"json": booking.payload if method == "PUT" else {"totalprice": 456}}
+    response = api.request(method, path, authenticated=True, **kwargs)
+    absent = api.request("GET", path)
+    expected_statuses = [200, 204, 404, 410] if method == "DELETE" else [404, 410]
+    attach_json("Missing-resource HTTP semantics", {
+        "method": method, "expected_statuses": expected_statuses,
+        "mutation_status": response.status_code, "confirming_get_status": absent.status_code,
+        "claim_scope": "HTTP error semantics; repeated DELETE idempotency is tested separately",
+    })
+    assert absent.status_code == 404, "Mutation recreated the missing resource"
+    assert response.status_code in expected_statuses, (
+        f"{method} on a missing booking should return one of {expected_statuses}, got HTTP {response.status_code}"
+    )
 
 
 def test_invalid_token_is_refreshed(api, booking):
@@ -79,8 +119,8 @@ def test_invalid_token_is_refreshed(api, booking):
     compare("Reauthenticated update status", 200, response.status_code)
     assert response.status_code == 200
     final = persisted(api, booking)
-    compare("Reauthenticated update persisted state", booking.payload, final)
-    assert final == booking.payload
+    assert_booking_matches("Reauthenticated update response", booking.payload, response_body(response))
+    assert_booking_matches("Reauthenticated update persisted state", booking.payload, final)
 
 
 def test_missing_prerequisite_is_recreated(api, registry):
@@ -90,13 +130,13 @@ def test_missing_prerequisite_is_recreated(api, registry):
     compare("Simulated external deletion status", 201, deleted.status_code)
     assert deleted.status_code == 201
     recovered = registry.ensure(handle)
-    compare("Recreated prerequisite payload", handle.payload, recovered)
-    assert recovered == handle.payload
+    assert_booking_matches("Recreated prerequisite payload", handle.payload, recovered)
     assert handle.booking_id != old_id
     assert registry.recoveries == [(old_id, handle.booking_id)]
     # Teardown sees a 404 for the original ID and accepts it.
 
 
+# Conflicting writers must leave one complete candidate, without merged fields.
 @pytest.mark.parametrize("round_number", range(3))
 def test_conflicting_updates_reconcile_to_one_complete_payload(api, booking, round_number, record_property):
     candidates = [
@@ -142,26 +182,38 @@ def test_conflicting_updates_reconcile_to_one_complete_payload(api, booking, rou
     })
     for index, (outcome, candidate) in enumerate(zip(outcomes, candidates)):
         compare(f"Writer {index}: status", 200, outcome["status"])
-        compare(f"Writer {index}: response payload", candidate, outcome["body"])
         assert outcome["status"] == 200
-        assert outcome["body"] == candidate
+        # Separate sandbox response-contract check: each PUT returns its own update.
+        assert_booking_matches(f"Writer {index}: response payload", candidate, outcome["body"])
     validate_invariants(final)
-    assert final in candidates, "Final state was corrupted or merged across conflicting payloads"
+    assert any(not diff for diff in candidate_diffs), "Final state was corrupted or merged across conflicting payloads"
     record_property("release_skew_ms", skew_ms)
     record_property("winner", final["firstname"])
     # Exact server arrival at the same millisecond cannot be guaranteed by client scheduling.
 
 
 
+# Parallel setup threads must share one valid token from the live auth manager.
 def test_parallel_setup_acquires_one_live_token(api):
     barrier = Barrier(4, timeout=30)
     def setup(_):
         barrier.wait()
         return api.auth.token()
     with ThreadPoolExecutor(max_workers=4) as pool:
-        tokens = list(pool.map(setup, range(4)))
+        tokens = list(pool.map(setup, range(4), timeout=60))
     # Assert summary values so pytest's failure introspection cannot print tokens.
     valid_tokens = all(isinstance(token, str) and bool(token) for token in tokens)
     unique_token_count = len(set(tokens))
+    auth_attempts = [event for event in api.observer.snapshot()
+                     if event["kind"] == "http" and event["method"] == "POST" and event["path"] == "/auth"]
+    # Pre-send connection retries retain one request_id; count successful issuance separately.
+    auth_requests = len({event["request_id"] for event in auth_attempts})
+    successful_issuances = sum(event["status"] == 200 for event in auth_attempts)
+    attach_json("Parallel token acquisition summary", {
+        "callers": 4, "valid_tokens": valid_tokens, "unique_token_count": unique_token_count,
+        "logical_auth_requests": auth_requests, "http_attempts": len(auth_attempts),
+        "successful_issuances": successful_issuances,
+    })
     assert valid_tokens
     assert unique_token_count == 1
+    assert auth_requests == successful_issuances == 1

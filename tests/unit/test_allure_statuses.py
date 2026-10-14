@@ -41,13 +41,14 @@ def test_evidence_survives_real_fixture_failures(tmp_path, failure_phase):
     conftest = (project / "tests/conftest.py").read_text()
     mock = '''
 import httpx
+import json
 from booker_qa.client import BookerClient as BaseClient
 
 def respond(request):
     if request.url.path == "/auth":
         return httpx.Response(200, json={"token": "fixture-secret"})
     if request.method == "POST":
-        return httpx.Response(SETUP_STATUS, json={"bookingid": 1, "booking": {"totalprice": 123}})
+        return httpx.Response(SETUP_STATUS, json={"bookingid": 1, "booking": json.loads(request.content)})
     if request.method == "DELETE":
         return httpx.Response(DELETE_STATUS)
     return httpx.Response(200, json={"totalprice": 123})

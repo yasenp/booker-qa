@@ -2,6 +2,7 @@
 import logging
 import time
 from typing import Any, Callable
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
@@ -55,9 +56,10 @@ class BookerClient:
                 self._observe(method, path, kwargs, attempt, started, request_id, response=response)
                 if method not in {"GET", "HEAD"} or response.status_code not in {429, 502, 503, 504} or attempt == attempts - 1:
                     return response
-            log.warning("Retrying %s %s after transient failure (attempt %s)", method, path, attempt + 1)
+            endpoint = urlsplit(path).path
+            log.warning("Retrying %s %s after transient failure (attempt %s)", method, endpoint, attempt + 1)
             backoff = self.settings.retry_backoff_seconds * 2 ** attempt
-            self.event("retry_scheduled", request_id=request_id, method=method, path=path.split("?", 1)[0],
+            self.event("retry_scheduled", request_id=request_id, method=method, path=endpoint,
                        next_attempt=attempt + 2, backoff_seconds=backoff,
                        reason=retry_reason)
             self._sleep(backoff)
@@ -68,7 +70,7 @@ class BookerClient:
             return
         # Only explicitly allowed headers; no query strings, exception messages, or auth bodies.
         from booker_qa.evidence import sanitize
-        endpoint = path.split("?", 1)[0]
+        endpoint = urlsplit(path).path
         body = "[authentication body omitted]" if endpoint == "/auth" else sanitize(kwargs.get("json"))
         result = None
         if response is not None:
@@ -107,9 +109,10 @@ class BookerClient:
         headers["Cookie"] = "token=" + token
         response = self._send(method, path, headers=headers, **kwargs)
         if response.status_code in {401, 403}:
-            self.event("auth_refresh", method=method, path=path.split("?", 1)[0],
+            endpoint = urlsplit(path).path
+            self.event("auth_refresh", method=method, path=endpoint,
                        trigger_status=response.status_code, retry_limit=1)
-            log.warning("Refreshing rejected authentication for %s %s", method, path)
+            log.warning("Refreshing rejected authentication for %s %s", method, endpoint)
             headers["Cookie"] = "token=" + self.auth.refresh(token)
             response = self._send(method, path, headers=headers, **kwargs)
         return response

@@ -16,6 +16,9 @@
 5. Schema validation checks types and explicit date formats. Business invariants
    enforce ordering and nonnegative price separately, because the server accepts
    values violating them. JSON Schema format checks are explicitly enabled.
+   POST creation also validates the response envelope and ID. Successful response
+   and persisted-state comparisons distinguish booleans from numbers and preserve
+   JSON type differences; ordinary Python equality would accept `True == 1`.
 6. The original PUT test retains its three persisted snapshots and historical ID.
    Additional sequential counts (2/5), concurrent identical PUTs (2/4 writers),
    repeated DELETE, and set-value PATCH verify observable state. Response equality
@@ -26,6 +29,9 @@
    coordinates release. Every distinguishing field, including nested dates,
    differs between candidates. Final membership detects partial payload merges.
    Client start skew and the winning payload are attached to JUnit results.
+   Each PUT returning its submitted payload is checked as a separate sandbox
+   response contract. It is stronger than the final-state integrity predicate and
+   must be revisited for a backend that returns the latest concurrent writer's state.
 8. pytest-xdist workers have independent clients, tokens, IDs, and fixtures.
    No filesystem token cache or global lock is required between processes.
 9. Controlled fault tests verify retry exhaustion, single-flight refresh, bad

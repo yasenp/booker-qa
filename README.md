@@ -36,13 +36,28 @@ A 401/403 triggers one token refresh and one protected-request replay.
 ## Expected outcomes
 
 - PASS: verified live behavior or deterministic framework behavior.
-- XFAIL: a dedicated known business-gap exception, with strict XPASS handling.
+- XFAIL: a dedicated unsupported business-policy exception, with strict XPASS handling.
 - FAIL/ERROR: assertions, transport exhaustion, contract violations, or cleanup failures.
 - UNSUPPORTED: explicitly listed in the coverage document; never counted as PASS.
 
-There are three strict business-gap tests: duplicate rejection, reversed-date
-rejection, and negative-price rejection. Each has a separate sandbox characterization
-check. Unexpected API errors cannot satisfy the expected-failure exception filter.
+There are four strict business-gap tests: duplicate rejection, reversed-date
+rejection, negative-price rejection, and previous-token revocation on a new login.
+Each has a separate sandbox characterization check. Unexpected API errors cannot
+satisfy the expected-failure exception filter. New-login revocation is an additional
+requested policy, separate from the assessment's reauthentication simulation.
+
+Seven source-backed API defects have also been reproduced on the hosted sandbox.
+Ten live regression cases cover date filters, nested PATCH preservation, invalid
+PATCH types, invalid-input HTTP errors, and missing-resource status codes. They live
+in the filter, validation, and lifecycle modules and assert the intended behavior
+directly. Application defects fail these tests; corrected behavior passes normally.
+The full live suite therefore fails while these defects remain in the application.
+See [the discovery evidence](docs/api-discovery.md).
+
+```sh
+python -m pytest tests/live/test_filters.py tests/live/test_validation.py tests/live/test_lifecycle.py --live
+python -m pytest --live -m 'not business_gap'
+```
 
 ## Architecture
 
@@ -53,13 +68,24 @@ check. Unexpected API errors cannot satisfy the expected-failure exception filte
 - `src/booker_qa/data.py`: unique names and calculated date ranges
 - `src/booker_qa/schemas/booking.py`: JSON Schema plus business invariants
 - `tests/unit/`: controlled authentication, transport, recovery, and schema failures
-- `tests/live/`: lifecycle, capabilities, and three conflicting-write rounds
+- `tests/live/`: authentication, lifecycle, search filters, input validation, idempotency, and sandbox capabilities
 
 Threaded writers share a thread-safe httpx client and one auth manager. pytest-xdist
 process workers have independent state. A barrier coordinates conflicting writes;
 the final record must match one complete candidate, without partial merges. The
 winning request can vary. JUnit properties record client release skew, winning
 payload, owned booking IDs, and prerequisite recoveries.
+
+Creation validates the POST status, envelope, positive integer ID, and nested
+booking before returning the handle. IDs are registered before response validation
+so malformed responses can still be cleaned up. Successful booking comparisons
+enforce schema and type-sensitive equality: `true` and `1` are different values.
+Business invariants remain separate from wire validation for negative scenarios.
+
+The conflicting-write test separately asserts the sandbox response contract:
+each successful PUT returns its submitted booking. Final-state integrity allows
+either complete candidate to win. A backend that returns another writer's latest
+record needs a different response-contract assertion, even if its final state is valid.
 
 Prerequisite GET 404 permits one recreation. Post-operation assertions do not
 recreate records. Cleanup accepts DELETE 404; sandbox DELETE 405 is accepted only
@@ -90,8 +116,8 @@ npm run report:live
 
 Open `reports/live/html/index.html` directly in a browser. For an offline report,
 use `reports/offline/allure-results` and `npm run report:offline`.
-Allure shows known XFAIL business gaps as skipped, with labels and explanations;
-pytest still enforces strict XPASS. Reports contain numbered request/response steps with sanitized payloads and headers,
+Allure shows application assertion failures as failed and XFAIL business gaps as skipped;
+pytest still enforces strict XPASS for those unsupported policies. Reports contain numbered request/response steps with sanitized payloads and headers,
 field-level expected/actual differences, PUT/PATCH summaries, concurrency reconciliation,
 retry/authentication events, cleanup/recovery details, and environment metadata.
 See [the reporting guide](docs/allure-reporting.md) for installation and validation.
@@ -121,3 +147,20 @@ Use `--mode offline` for offline results. Allure includes this measured JSON and
 the scope document as global attachments. Coverage reports executed and passed
 cases separately; collected skips do not count as execution. Existing test history
 identities are retained, and additional cases appear as new tests.
+
+
+## Token validity after another login
+
+`tests/live/test_auth_sessions.py` uses two independent clients with the same credentials.
+It verifies the first token, logs in on the second client, verifies the new token,
+and probes the original token through a protected PUT. Explicit token cookies
+bypass automatic reauthentication so revocation cannot be hidden by a refresh.
+An invalid-token control must return 403 and leave the booking unchanged.
+
+The sandbox retains the earlier token. A characterization test records that
+behavior; a strict XFAIL represents the requested single-session revocation policy.
+New-login revocation is distinct from time-based expiration, which is not measured.
+
+```sh
+python -m pytest tests/live/test_auth_sessions.py --live
+```

@@ -22,10 +22,19 @@ BOOKING_SCHEMA = {
     },
 }
 VALIDATOR = Draft202012Validator(BOOKING_SCHEMA, format_checker=FormatChecker())
+CREATE_VALIDATOR = Draft202012Validator({
+    "type": "object", "required": ["bookingid", "booking"], "additionalProperties": False,
+    "properties": {"bookingid": {"type": "integer", "minimum": 1}, "booking": BOOKING_SCHEMA},
+}, format_checker=FormatChecker())
 
 
 def validate_contract(booking: dict) -> None:
     VALIDATOR.validate(booking)
+
+
+def validate_create_contract(body: dict) -> None:
+    """Validate the POST envelope and nested booking without enforcing business rules."""
+    CREATE_VALIDATOR.validate(body)
 
 
 def validate_invariants(booking: dict) -> None:

@@ -57,11 +57,16 @@ IDs and distinguish live evidence from controlled simulations. Fixture steps sho
 prerequisite creation and cleanup; lifecycle steps show update and verification.
 
 Allure's adapter represents pytest XFAIL as **skipped**, with an XFAIL explanation.
-The three known enterprise expectations are tagged **business-gap** and attach the
+Known enterprise expectations are tagged **business-gap** and attach the
 requirements coverage table. Ordinary offline skips say `Enable with --live`.
 Strict XPASS remains **failed** and fails pytest. Assertion failures are failed;
 unexpected exceptions and teardown exceptions are broken. These mappings are
 verified through isolated adapter tests, not by changing actual test outcomes.
+Application checks are grouped by feature: Booking Search, Input Validation,
+PATCH Integrity, and HTTP Error Semantics. Their assertions fail on defects and
+pass when the application behaves correctly. There is no special expected-failure
+classification for application defects; the four unsupported **business-gap**
+policies retain their previously agreed handling.
 
 Unsupported concepts remain entries in the attached coverage table. They are not
 invented passing tests. Invalid-token simulation is additionally tagged as simulated
@@ -80,6 +85,8 @@ omitted entirely. Authentication and arbitrary headers, query strings, non-JSON 
 messages are omitted. Only Accept, Content-Type, Content-Length, Retry-After, ETag,
 and Last-Modified headers are allowed. Sensitive structured keys are recursively redacted before storage.
 Automatic stdout/stderr/log attachments are disabled with `--allure-no-capture`.
+Framework retry and refresh warnings also omit URL credentials, query strings,
+and fragments. Controlled tests check captured warnings as well as structured evidence.
 
 Concurrent reconciliation attaches both candidates, responses, release skew, and
 the final state. Owned booking IDs and prerequisite replacements are attached in
@@ -96,8 +103,10 @@ still fails the job even if report generation succeeds. Nothing is publicly publ
 
 ## Verified integration
 
-- Offline final run: 42 passed, 16 live tests skipped.
-- Live final run with two workers: 55 passed, 3 strict XFAIL.
+- Latest offline run: 88 passed, 35 live tests skipped.
+- Latest live run with two workers: 109 passed, 10 failed application checks,
+  and four strict XFAIL business-policy gaps. Pytest exits with status 1.
+- Both runs collect all 123 cases with the default pytest import configuration.
 - Status tests cover PASS, ordinary skip, XFAIL, strict XPASS, assertion failure,
   unexpected exception, and teardown failure using isolated subprocesses.
 - Sanitization and concurrent collector checks pass.
@@ -163,6 +172,9 @@ Comparisons are attached before assertions. HTTP evidence is collected at the cl
 boundary and rendered after the test call and again during teardown, so setup/call/
 teardown failures still retain evidence. Isolated reporting tests verify all three
 failure phases without injecting failures into the real sandbox suite.
+Successful booking assertions enforce the schema and type-sensitive differences;
+comparison attachments alone do not determine test success. Controlled regressions
+exercise both mutation responses and subsequent reads with incorrect JSON types.
 
 
 ## Idempotency evidence and scope labels

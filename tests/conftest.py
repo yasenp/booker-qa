@@ -7,10 +7,11 @@ from pathlib import Path
 import allure
 import pytest
 from booker_qa.evidence import EvidenceCollector
-from reporting import attach_json, render_events
+from reporting import assert_booking_matches, attach_json, render_events
 from booker_qa.bookings import BookingRegistry
 from booker_qa.client import BookerClient
 from booker_qa.config import Settings
+from booker_qa.schemas.booking import validate_invariants
 
 
 def pytest_addoption(parser):
@@ -83,8 +84,12 @@ def registry(api, record_property):
 @pytest.fixture
 def booking(registry):
     with allure.step("Create unique booking prerequisite and verify availability"):
-        handle, _ = registry.create()
-        registry.ensure(handle)
+        handle, body = registry.create()
+        assert_booking_matches("Created POST booking", handle.payload, body)
+        validate_invariants(body)
+        actual = registry.ensure(handle)
+        assert_booking_matches("Available booking prerequisite", handle.payload, actual)
+        validate_invariants(actual)
     return handle
 
 
@@ -101,6 +106,12 @@ def feature_for(item):
         return "Authentication", "REQ-1"
     if "conflicting" in name:
         return "Concurrency", "REQ-4"
+    if "missing_resource_mutation" in name:
+        return "HTTP Error Semantics", "REQ-5"
+    if "test_filters" in str(item.path):
+        return "Booking Search", "REQ-2"
+    if "test_validation" in str(item.path):
+        return "Input Validation", "REQ-2"
     if "patch" in name:
         return "PATCH Integrity", "REQ-3"
     if "put_three" in name:
@@ -136,7 +147,6 @@ def report_context(request):
                                    "An unexpected pass fails pytest and requires capability-baseline review.")
         coverage = Path(__file__).parents[1] / "docs" / "requirements-coverage.md"
         allure.attach(coverage.read_text(), "Unsupported capabilities and requirement coverage", allure.attachment_type.TEXT)
-
 
 def pytest_sessionfinish(session, exitstatus):
     # Only the controller writes run metadata; workers share UUID-named result files.

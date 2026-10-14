@@ -102,3 +102,137 @@ three offline runs. All 64 identities from the previous run are preserved; 15 ad
 cases are reported as new. Previous report/history snapshots are archived under
 reports/archive/20261013T191559Z. Dependency and diff checks pass. Remote CI and
 visual browser rendering were not exercised in this session.
+
+
+## Authentication session checks — 14 October 2026
+
+Added unknown-user response validation: HTTP 200 with Bad credentials and no token.
+Added separate-client same-credential login probes. Both original and newly issued
+tokens authorize protected PUTs; a deliberately invalid token returns 403 and
+leaves the booking unchanged. Probes use explicit token cookies without automatic
+refresh. Earlier-token acceptance is a passing sandbox characterization and a
+strict XFAIL for the requested single-session revocation policy, not proof of
+time-based token expiration.
+
+Initial auth-file run: 2 passed, 1 XFAIL. Final session checks with the added invalid-
+token state check: 1 passed, 1 XFAIL, 1 unrelated auth test deselected, in 8.19 seconds.
+Owned booking cleanup succeeded. Targeted Allure evidence is saved separately in
+reports/auth-session-final/allure-results; the existing full-run histories were
+not changed. Diff checks pass.
+
+
+## Assessment review fixes — 14 October 2026
+
+Renamed the new live authentication module to test_auth_sessions.py so it no longer
+collides with tests/unit/test_auth.py during default pytest collection. Full runs
+now use the documented commands without import-mode or Python-path workarounds.
+
+Creation checks the POST status, response envelope, positive integer booking ID,
+and nested booking contract. A valid ID remains registered when later validation
+fails, preserving cleanup. Successful booking assertions validate wire types and
+type-sensitive equality; negative business-rule probes keep their separate scope.
+
+Added 21 controlled regressions: eight PUT/PATCH response/persistence type-drift
+cases, four malformed-create/status cases with cleanup, five invalid IDs, and four
+retry/refresh warning-redaction cases. The strengthened initial-acquisition test
+holds issuance open while other callers contend, uses bounded waits, and rejected
+a deliberately lock-free manager in 20/20 mutation checks. The live four-thread
+test observed one logical auth request, one HTTP attempt, and one successful issuance.
+
+Default sequential offline run: **78 passed, 25 skipped in 2.20 seconds**.
+Default live two-worker run: **99 passed, 4 strict XFAIL in 32.51 seconds**.
+All 103 cases collected. The four expected failures remain duplicate rejection,
+reversed-date rejection, negative-price rejection, and the requested new-login
+revocation policy. Supported idempotency cases passed 7/7 and controlled response-
+loss cases passed 8/8. All 25 tracked cleanup outcomes reported deletion or
+confirmed absence. All 675 live attachment references resolve.
+
+Both Allure HTML reports were regenerated with current coverage attachments.
+The exact existing history bytes were preserved and one run appended per mode:
+live has five runs; offline has four. All 79 identities from each previous historical
+run remain present; new authentication and regression cases bring the total to 103.
+Previous raw results, HTML, and history are archived under
+reports/archive/review-fixes-20261014T131928Z. Audit results are saved in
+reports/review-fixes-validation.json. Diff checks pass. Remote GitHub Actions and
+visual browser inspection were not exercised during this fix.
+
+
+## Hosted API defect regressions — 14 October 2026
+
+Historical checkpoint: the expected-failure classification described in this
+section was subsequently replaced by direct assertions; see the next section.
+
+A separate bounded discovery probe reproduced all seven source findings on the
+hosted sandbox: inclusive check-in filtering, reversed checkout filtering, nested
+PATCH checkout corruption, invalid PATCH type acceptance, incomplete POST returning
+500, malformed date filters returning 500, and missing-resource mutations returning
+405. The upstream source and hosted observations were checked separately; the
+deployed commit is not known. Evidence and source links are in api-discovery.md.
+
+Added ten live cases in tests/live/test_api_defects.py, including both malformed
+date filters and all three missing-resource mutation methods. Nested PATCH checks
+both its response and an independent GET while preserving the full expected booking.
+Known defects have separate Allure labels and identifiers from business-policy gaps.
+Only their reproduced signatures after successful controls raise the exception
+allowed by strict XFAIL. Fixed behavior produces strict XPASS; other failures remain
+visible. Ten controlled checks exercise this classification, including unrelated
+corruption, missing records, transport errors, and unsuccessful positive controls.
+
+Full offline two-worker run: **88 passed, 35 skipped in 2.32 seconds**.
+Full live two-worker run: **109 passed, 14 strict XFAIL in 54.44 seconds**.
+All 123 cases collected. Ten live expected failures represent the seven API defects;
+four remain the existing business-policy gaps. These results detect hosted API
+defects; they do not change that service's implementation. Supported idempotency
+cases still passed 7/7 and controlled response-loss cases passed 8/8. The new defect
+cases are separate from that scoped idempotency catalog.
+
+All 36 tracked cleanup outcomes succeeded: 31 deleted and five confirmed absent.
+All 991 live attachment references resolve. The parallel authentication check
+recorded one logical auth request, one HTTP attempt, and one successful issuance.
+Both reports include the current coverage JSON and scope documentation.
+
+Allure history retains its exact prior bytes and adds one run per mode: six live
+runs and five offline runs. All 103 previous test identities remain present;
+20 new cases bring the total to 123. Previous results, HTML, and history are archived
+under reports/archive/api-defects-20261014T134827Z. The report audit is saved in
+reports/api-defects-validation.json, and the independent probe observations and
+sanitized trace are in reports/hosted-findings/. Diff checks pass. Remote CI and
+visual browser inspection were not exercised during this update.
+
+
+## Direct application assertions — 14 October 2026
+
+Moved the ten application checks into their feature modules and removed the
+known-defect marker, exception, signature matching, and XFAIL decorators:
+
+- tests/live/test_filters.py: check-in/checkout before/equal/after thresholds and
+  invalid date filters (four cases).
+- tests/live/test_validation.py: invalid PATCH types with unchanged-state checks,
+  and incomplete POST validation (two cases).
+- tests/live/test_lifecycle.py: nested PATCH preservation in response and GET, and
+  missing-resource PUT/PATCH/DELETE status checks (four cases).
+
+These tests now pass on correct behavior and fail on application defects. The four
+previously agreed unsupported business-policy expectations retain their separate
+strict XFAIL handling. The old defect-specific test modules were removed. Controlled
+checks now live beside the lifecycle and filter assertion tests; correct nested
+merges and client validation responses pass, while corruption and server errors fail.
+
+Full offline two-worker run: **88 passed, 35 skipped in 1.94 seconds**, exit code 0.
+Full live two-worker run: **10 failed, 109 passed, 4 XFAIL in 52.01 seconds**, exit code 1.
+All ten failures are direct assertions exposing the seven reported defects. Allure
+records them as failed, with request/response and expected/actual evidence. The four
+business gaps are its only skipped live results. Idempotency catalog checks remain
+7/7 passed, and controlled response-loss checks remain 8/8 passed.
+
+All 36 owned-booking cleanup outcomes succeeded despite the failing assertions:
+31 deletions and five confirmed absences. All 1,001 live attachment references resolve.
+Both HTML reports were regenerated with coverage attachments, and all previous
+history bytes remain unchanged. One run was added per mode: seven live runs and six
+offline runs. Moving/reworking tests creates 20 new history identities; 103 remain
+unchanged, and all earlier runs remain available with their original identities.
+
+Previous reports and history are archived under
+reports/archive/direct-assertions-20261014T135904Z. Audit results are in
+reports/direct-assertions-validation.json. Diff checks pass. Remote CI and visual
+browser inspection were not exercised during this update.

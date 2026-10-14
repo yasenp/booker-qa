@@ -4,6 +4,7 @@ import json
 import allure
 
 from booker_qa.evidence import json_diff, sanitize
+from booker_qa.schemas.booking import validate_contract
 
 
 def attach_json(name, value):
@@ -15,6 +16,13 @@ def compare(name, expected, actual):
     attach_json(name, {"matches": not differences, "expected": expected, "actual": actual,
                        "differences": differences})
     return differences
+
+
+def assert_booking_matches(name, expected, actual):
+    """Attach evidence, then enforce wire shape and type-sensitive equality."""
+    differences = compare(name, expected, actual)
+    validate_contract(actual)
+    assert not differences, f"{name}: {differences}"
 
 
 def response_body(response):

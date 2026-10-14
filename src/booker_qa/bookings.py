@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from booker_qa.client import BookerClient
 from booker_qa.data import booking_payload
+from booker_qa.schemas.booking import validate_create_contract
 
 log = logging.getLogger(__name__)
 
@@ -26,11 +27,14 @@ class BookingRegistry:
         response = (client or self.client).request("POST", "/booking", json=data)
         response.raise_for_status()
         body = response.json()
-        booking_id = body["bookingid"]
-        if not isinstance(booking_id, int) or isinstance(booking_id, bool):
+        booking_id = body.get("bookingid") if isinstance(body, dict) else None
+        if type(booking_id) is not int or booking_id <= 0:
             raise ValueError("Invalid booking ID")
         # Register before validating the returned booking so cleanup survives bad contracts.
         self.ids.append(booking_id)
+        if response.status_code != 200:
+            raise AssertionError(f"Expected create status 200, got {response.status_code}")
+        validate_create_contract(body)
         return BookingHandle(booking_id, data), body["booking"]
 
     def ensure(self, handle: BookingHandle, *, max_recreates=1):

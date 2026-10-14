@@ -7,7 +7,8 @@ import allure
 import pytest
 
 from booker_qa.evidence import json_diff
-from reporting import attach_json, compare, response_body
+from booker_qa.schemas.booking import validate_contract
+from reporting import assert_booking_matches, attach_json, compare, response_body
 
 pytestmark = pytest.mark.live
 
@@ -16,7 +17,9 @@ def read_booking(api, booking):
     response = api.request("GET", f"/booking/{booking.booking_id}")
     compare("Persisted read status", 200, response.status_code)
     assert response.status_code == 200
-    return response.json()
+    body = response.json()
+    validate_contract(body)
+    return body
 
 
 def repeat_update(api, booking, method, payload, repetitions):
@@ -28,9 +31,8 @@ def repeat_update(api, booking, method, payload, repetitions):
             with allure.step(f"Identical {method} {iteration + 1}/{repetitions}: apply and verify state"):
                 response = api.request(method, f"/booking/{booking.booking_id}", json=payload, authenticated=True)
                 outcomes.append({"status": response.status_code, "body": response_body(response)})
-                compare(f"{method} {iteration + 1}: response contract", expected, response_body(response))
                 assert response.status_code == 200
-                assert response.json() == expected
+                assert_booking_matches(f"{method} {iteration + 1}: response contract", expected, response_body(response))
                 actual = read_booking(api, booking)
                 snapshots.append(actual)
                 differences = compare(f"{method} {iteration + 1}: persisted state", expected, actual)
@@ -58,6 +60,7 @@ def test_repeated_set_value_patch_preserves_observable_state(api, booking):
     repeat_update(api, booking, "PATCH", {"totalprice": 777}, 3)
 
 
+# Identical concurrent PUTs must preserve the intended single-request booking state.
 @pytest.mark.parametrize("workers", [2, 4])
 def test_concurrent_identical_put_preserves_observable_state(api, booking, workers):
     initial = read_booking(api, booking)
@@ -93,9 +96,8 @@ def test_concurrent_identical_put_preserves_observable_state(api, booking, worke
         "claim_scope": "observable state; operation counts and hidden effects are unmeasured",
     })
     for index, outcome in enumerate(outcomes):
-        compare(f"Writer {index}: response contract", payload, outcome["body"])
         assert outcome["status"] == 200
-        assert outcome["body"] == payload
+        assert_booking_matches(f"Writer {index}: response contract", payload, outcome["body"])
     assert not differences
 
 
