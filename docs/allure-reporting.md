@@ -56,6 +56,13 @@ concurrency, recovery, and reporting integrity. Labels record assessment require
 IDs and distinguish live evidence from controlled simulations. Fixture steps show
 prerequisite creation and cleanup; lifecycle steps show update and verification.
 
+Each case's description comes from its test function's docstring: scenario, test
+type, expected behavior, parameter matrix, and material limits. Collection attaches
+the dedented description before fixture setup, so skipped cases also explain their
+intended coverage. The [test case catalog](test-cases.md) links every function and
+summarizes the same expectations. Names and parameter IDs remain unchanged to
+preserve test selection and report history identity.
+
 Allure's adapter represents pytest XFAIL as **skipped**, with an XFAIL explanation;
 that remains relevant to historical runs and isolated adapter tests. Current live
 tests use no XFAIL markers or business-gap classification. Ordinary offline skips
@@ -125,6 +132,11 @@ still fails the job even if report generation succeeds. Nothing is publicly publ
 ## Verified integration
 
 - Latest full offline run: 196 passed, 135 live cases skipped (331 collected).
+- Documentation verification: all 331 result descriptions match the corresponding
+  test docstrings, including skipped live cases. All 331 history IDs are unchanged
+  and all 478 attachment references resolve. Report:
+  `reports/test-documentation-20261014T205107Z/offline/html/index.html`.
+  This offline run leaves both full-suite histories unchanged.
 - Focused sandbox-hygiene run: both live cases passed, including one recreation
   followed by successful PUT/GET. All four owned IDs were deleted or confirmed
   absent; six cleanup attempts succeeded, including repeated fixture cleanup.

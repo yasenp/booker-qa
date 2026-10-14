@@ -1,3 +1,5 @@
+"""Live booking contracts, state reconciliation, authentication recovery, and owned-record hygiene."""
+
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import date, timedelta
@@ -24,13 +26,38 @@ def persisted(api, handle):
     return body
 
 
+# A created booking must round-trip with its complete contract and valid business values.
 def test_create_contract(api, booking):
+    """Use the booking fixture's validated POST result and independently GET the owned
+    resource.
+
+    Type: Live creation contract.
+
+    Expected: Stored values exactly match the original payload, strict schema types hold,
+    price is nonnegative, and checkout follows check-in.
+
+    Cases: One generated valid booking.
+    """
     body = persisted(api, booking)
     assert_booking_matches("Created booking contract and invariants: expected vs actual", booking.payload, body)
     validate_invariants(body)
 
 
+# Three identical PUTs must produce three identical valid persisted snapshots.
 def test_put_three_times_is_idempotent(api, booking):
+    """Set lastname and price in a complete booking payload, submit it three times, and read
+    after each update.
+
+    Type: Live idempotency.
+
+    Expected: Every write returns 200 with the expected body; all three GET snapshots equal
+    the same full payload.
+
+    Cases: Exactly 3 consecutive PUTs.
+
+    Scope: Response equality is checked as the sandbox contract. Hidden side effects,
+    operation counts, and resource versions are unmeasured.
+    """
     initial = persisted(api, booking)
     attach_json("Idempotency scope and initial state", {
         "initial_state": initial, "repetitions": 3,
@@ -51,7 +78,18 @@ def test_put_three_times_is_idempotent(api, booking):
     assert not compare("Idempotency summary: three persisted snapshots", [payload] * 3, snapshots)
 
 
+# A price-only PATCH must leave all unreferenced booking fields unchanged.
 def test_patch_preserves_every_untouched_field(api, booking):
+    """Capture the complete booking, PATCH totalprice to 777, and independently read the stored
+    result.
+
+    Type: Live partial-update integrity.
+
+    Expected: HTTP 200 response and GET equal the baseline with only totalprice replaced;
+    names, flags, needs, and both nested dates are preserved.
+
+    Cases: Only totalprice changes.
+    """
     with allure.step("Capture full state before the partial update"):
         before = persisted(api, booking)
     response = api.request("PATCH", f"/booking/{booking.booking_id}", json={"totalprice": 777}, authenticated=True)
@@ -71,8 +109,21 @@ def test_patch_preserves_every_untouched_field(api, booking):
         assert_booking_matches("PATCH persisted state: expected vs actual", expected, after)
 
 
-# Updating only check-in must preserve checkout and every other unreferenced field.
+# A check-in-only nested PATCH must preserve checkout and all unrelated fields.
 def test_nested_patch_preserves_checkout(api, booking):
+    """Advance check-in by one day within the generated stay and capture both PATCH response
+    and independent GET before asserting.
+
+    Type: Live nested-update regression.
+
+    Expected: Both statuses are 200 and complete payloads equal the intended nested merge,
+    with the original checkout retained.
+
+    Cases: Only bookingdates.checkin changes.
+
+    Scope: Corruption is a normal failure; post-operation reads do not recreate a missing or
+    damaged booking.
+    """
     before = persisted(api, booking)
     assert_booking_matches("Nested PATCH baseline", booking.payload, before)
     checkin = (date.fromisoformat(before["bookingdates"]["checkin"]) + timedelta(days=1)).isoformat()
@@ -91,9 +142,22 @@ def test_nested_patch_preserves_checkout(api, booking):
     validate_contract(actual["persisted"])
 
 
-# Supported mutation routes must report a missing booking correctly and leave it absent.
+# Supported mutation routes must report missing resources and keep them absent.
 @pytest.mark.parametrize("method", ["PUT", "PATCH", "DELETE"])
 def test_missing_resource_mutation_reports_absence(api, booking, method):
+    """Delete an owned booking, confirm GET 404, then call its mutation route and check absence
+    again.
+
+    Type: Live HTTP semantics negative.
+
+    Expected: PUT/PATCH return 404/410; repeated DELETE returns 200/204/404/410. The
+    resource remains absent with GET 404.
+
+    Cases: PUT, PATCH, and DELETE after confirmed deletion.
+
+    Scope: HTTP 405 fails this semantics check even though cleanup and DELETE-idempotency
+    scenarios can tolerate it when absence is confirmed.
+    """
     path = f"/booking/{booking.booking_id}"
     assert api.request("DELETE", path, authenticated=True).status_code == 201
     assert api.request("GET", path).status_code == 404
@@ -112,7 +176,21 @@ def test_missing_resource_mutation_reports_absence(api, booking, method):
     )
 
 
+# A rejected cached token must allow the protected update to recover successfully.
 def test_invalid_token_is_refreshed(api, booking):
+    """Replace the client's cached token with an invalid value, then perform an authenticated
+    PUT on an owned booking.
+
+    Type: Live authentication recovery.
+
+    Expected: The client recovers to HTTP 200 and response plus final GET match the intended
+    full payload.
+
+    Cases: Deliberately invalid cached token.
+
+    Scope: Invalid-token rejection simulates expiry. Actual elapsed-time expiry and exact
+    shared-refresh counts have separate tests.
+    """
     # A live invalidation simulates expiry; no server TTL is claimed.
     api.auth._token = "deliberately-invalid"
     response = api.request("PUT", f"/booking/{booking.booking_id}", json=booking.payload, authenticated=True)
@@ -136,8 +214,21 @@ def purge_owned_prerequisite(api, independent_api, handle):
     assert absent.status_code == 404, "Controlled purge did not leave the prerequisite absent"
 
 
-# An independent client's purge must trigger one prerequisite recreation and allow the scenario to continue.
+# A purged prerequisite must be recreated once so the protected scenario can continue.
 def test_missing_prerequisite_is_recreated(api, registry, independent_api):
+    """Delete an owned prerequisite through a separate client, call registry.ensure, then
+    update and read the replacement.
+
+    Type: Live sandbox recovery.
+
+    Expected: The handle changes to a tracked replacement ID, one recovery is recorded, and
+    protected PUT/GET match the updated full payload.
+
+    Cases: Independent-client deletion followed by one recreation.
+
+    Scope: Both clients use the sandbox account and target only owned IDs. Recovery applies
+    to prerequisites; post-operation failures remain visible.
+    """
     handle, body = registry.create()
     assert_booking_matches("Original prerequisite", handle.payload, body)
     old_id = handle.booking_id
@@ -162,8 +253,21 @@ def test_missing_prerequisite_is_recreated(api, registry, independent_api):
     # Teardown accepts the old ID's DELETE 404, or sandbox 405 only after a confirming GET 404.
 
 
-# Cleanup must accept an externally deleted record and still remove every remaining owned booking.
+# Cleanup must handle an already-absent booking and continue through every owned ID.
 def test_sandbox_cleanup_handles_external_purge(api, registry, independent_api):
+    """Simulate external deletion, clean up both tracked IDs, and inspect cleanup events and
+    confirming reads.
+
+    Type: Live sandbox hygiene.
+
+    Expected: Each ID receives a successful deletion/absence outcome, both final GETs return
+    404, and cleanup creates no replacement booking.
+
+    Cases: 2 owned records; first removed through a separate client.
+
+    Scope: DELETE 405 requires GET 404. Repeated fixture cleanup is allowed; unrelated
+    resource IDs and global reset routes are never used.
+    """
     handles = []
     for _ in range(2):
         handle, body = registry.create()
@@ -237,9 +341,23 @@ def reconcile_writes(api, booking, candidates, outcomes, record_property, *, pol
     return snapshots[0]["body"]
 
 
-# Conflicting writers must leave one complete candidate that remains stable across repeated reads.
+# Conflicting full updates must settle on one complete payload that stays stable.
 @pytest.mark.parametrize("round_number", range(3))
 def test_conflicting_updates_reconcile_to_one_complete_payload(api, booking, round_number, record_property):
+    """Release distinct complete payloads against one owned ID and reconcile both write
+    outcomes with three subsequent GETs.
+
+    Type: Live concurrency integrity.
+
+    Expected: Both writes return 200 and their own payload; all three reads equal one full
+    candidate with strict types and invariants. Partial merges and drift fail.
+
+    Cases: 3 rounds, each with 2 synchronized PUT writers.
+
+    Scope: Either writer may win. Client timing cannot reveal commit order; direct database
+    state and optimistic locking are unverified. Unexpected 409/412 fail the configured
+    overwrite policy.
+    """
     candidates = conflicting_payloads(booking)
     barrier = Barrier(2, timeout=30)
     def update(payload):
@@ -284,9 +402,22 @@ def test_conflicting_updates_reconcile_to_one_complete_payload(api, booking, rou
     # Exact server arrival at the same millisecond cannot be guaranteed by client scheduling.
 
 
-# With a known write order, the second completed PUT must be the stable winner in both directions.
+# With a known write order, the second complete PUT must be the stable winner.
 @pytest.mark.parametrize("writer_order", [(0, 1), (1, 0)], ids=["A_then_B", "B_then_A"])
 def test_ordered_conflicting_put_uses_last_completed_write(api, booking, writer_order, record_property):
+    """Complete the first PUT and confirming GET before starting the second; then reconcile
+    three final reads.
+
+    Type: Live overwrite-policy control.
+
+    Expected: Both responses match their submitted payloads and every final GET equals the
+    second writer's complete booking.
+
+    Cases: A_then_B and B_then_A.
+
+    Scope: This sequential control verifies overwrite behavior when order is known. It does
+    not establish concurrent server commit order.
+    """
     candidates = conflicting_payloads(booking)
     outcomes = []
     attach_json("Ordered overwrite control", {
@@ -356,8 +487,21 @@ def parallel_patches(api, booking, patches, record_property):
     return outcomes
 
 
-# Two conflicting price PATCHes must leave one submitted price and preserve all other fields.
+# Conflicting price PATCHes must preserve one submitted value and every untouched field.
 def test_conflicting_patch_preserves_one_price_and_untouched_fields(api, booking, record_property):
+    """Capture a baseline, authenticate before releasing two threads, and compare their
+    outcomes and three final reads with both complete candidates.
+
+    Type: Live concurrency integrity.
+
+    Expected: Both PATCHes return 200 with their own update; one price wins and the
+    identical complete booking appears in every reconciliation GET.
+
+    Cases: 2 synchronized PATCH writers: prices 250 and 850.
+
+    Scope: Client release skew is recorded, not constrained. Exact server overlap, hidden
+    effects, and commit order are unmeasured.
+    """
     before = persisted(api, booking)
     assert_booking_matches("Conflicting PATCH baseline", booking.payload, before)
     patches = [{"totalprice": 250}, {"totalprice": 850}]
@@ -376,8 +520,21 @@ def test_conflicting_patch_preserves_one_price_and_untouched_fields(api, booking
     record_property("winner", final["totalprice"])
 
 
-# Concurrent PATCHes to separate fields must both survive, without changing any other fields.
+# Concurrent PATCHes to separate fields must preserve both changes without drift.
 def test_concurrent_patch_preserves_both_independent_changes(api, booking, record_property):
+    """PATCH different top-level fields on one booking, collect both responses, and read the
+    final state three times.
+
+    Type: Live lost-update detection.
+
+    Expected: Both writes return 200. Each response includes its own change alone or both;
+    all final reads contain both changes and preserve unrelated fields.
+
+    Cases: 2 synchronized writers: totalprice and lastname.
+
+    Scope: This checks commutative partial-update integrity. A response before the other
+    write completes is valid; exact server overlap is not guaranteed.
+    """
     before = persisted(api, booking)
     assert_booking_matches("Independent PATCH baseline", booking.payload, before)
     patches = [{"totalprice": 675}, {"lastname": "ConcurrentGuest"}]
@@ -402,8 +559,21 @@ def test_concurrent_patch_preserves_both_independent_changes(api, booking, recor
 
 
 
-# Parallel setup threads must share one valid token from the live auth manager.
+# Four simultaneous setup callers must share one successful live token issuance.
 def test_parallel_setup_acquires_one_live_token(api):
+    """Release token requests through a barrier and inspect sanitized authentication attempt
+    evidence after all callers return.
+
+    Type: Live authentication concurrency.
+
+    Expected: All tokens are nonempty and identical, with one logical POST /auth request and
+    one successful issuance.
+
+    Cases: 4 threads sharing one AuthManager.
+
+    Scope: Pre-send connection retries may add HTTP attempts while retaining one logical
+    request ID. Token values are omitted from report summaries.
+    """
     barrier = Barrier(4, timeout=30)
     def setup(_):
         barrier.wait()

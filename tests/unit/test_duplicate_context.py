@@ -23,11 +23,26 @@ def capabilities():
     return module
 
 
-# Duplicate attempts use separate authenticated clients, preserve dates across year-end, and clean up on failure.
+# Duplicate assertions must distinguish real rejection from acceptance or hidden mutation.
 @pytest.mark.parametrize("outcome", ["accepted", "reject_400", "reject_409", "server_error",
                                      "malformed_acceptance", "rejection_mutates_original",
                                      "accepted_201", "rejection_creates_duplicate", "success_with_error_text"])
 def test_duplicate_context_and_failure_classification(capabilities, monkeypatch, outcome):
+    """Run the actual duplicate scenario with two mocked HTTP clients and a fixed date crossing
+    year-end; model rejection, acceptance, malformed results, and rejection with side
+    effects.
+
+    Type: Controlled cross-session regression.
+
+    Expected: Only clean 400/409 rejection passes. Both sessions use their own issued
+    cookie, identical calculated dates are submitted, failures raise ordinary assertions,
+    and every created record is cleaned up.
+
+    Cases: 9 duplicate response/state outcomes.
+
+    Scope: The model verifies request construction and assertion behavior, not hosted
+    overlap enforcement or distinct-user authorization.
+    """
     class FixedDate(date):
         @classmethod
         def today(cls):

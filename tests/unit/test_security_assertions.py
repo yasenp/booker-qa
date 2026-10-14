@@ -25,10 +25,20 @@ def scenarios():
     return modules
 
 
-# Rejection passes only when status and state agree; a 403 cannot hide a mutation or deletion.
+# An authorization denial must pass only when the protected record is unchanged.
 @pytest.mark.parametrize("status,mutation", [(403, "none"), (200, "none"), (200, "update"),
                                             (403, "update"), (403, "delete")])
 def test_unauthorized_mutation_checks_status_and_state(scenarios, status, mutation):
+    """Run the live unauthorized-PATCH assertion helper against modeled response codes and
+    persisted side effects.
+
+    Type: Controlled security assertion check.
+
+    Expected: Only HTTP 403 with unchanged state passes. A success response, hidden update,
+    or deletion raises the authorization/state-preservation assertion.
+
+    Cases: 5 denial/success and none/update/delete combinations.
+    """
     payload = booking_payload()
     state = deepcopy(payload)
 
@@ -51,9 +61,22 @@ def test_unauthorized_mutation_checks_status_and_state(scenarios, status, mutati
         api.close()
 
 
-# A corrupted booking ID must fail the scenario and still allow both owned records to be deleted.
+# An internal-ID collision must fail validation while leaving both aliased records cleanable.
 @pytest.mark.parametrize("patch_status", [405, 400], ids=["missing-original", "reject-but-mutates"])
 def test_internal_id_collision_is_reported_and_cleaned(scenarios, patch_status):
+    """Run the live internal-field scenario against a model that aliases the first record to
+    the second owned ID before returning an error.
+
+    Type: Controlled security cleanup regression.
+
+    Expected: The live assertion fails, the cleanup registry retains the duplicate
+    destination ID, and cleanup deletes both records sharing that ID.
+
+    Cases: PATCH 405 or 400 after mutating the internal ID.
+
+    Scope: Only test-owned IDs are modeled; this checks failure cleanup without targeting
+    another user's booking.
+    """
     records = []
     deleted = []
 

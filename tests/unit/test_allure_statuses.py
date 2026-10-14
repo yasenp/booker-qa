@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 
+# Allure status and pytest exit codes must preserve every intentional test outcome.
 @pytest.mark.parametrize("source,status,exit_code", [
     ("def test_probe(): pass", "passed", 0),
     ("@pytest.mark.skip(reason='ordinary skip')\ndef test_probe(): pass", "skipped", 0),
@@ -18,6 +19,19 @@ import pytest
     ("@pytest.fixture\ndef resource():\n    yield\n    raise RuntimeError('cleanup failure')\ndef test_probe(resource): pass", "broken", 1),
 ])
 def test_adapter_preserves_status_and_exit_code(tmp_path, source, status, exit_code):
+    """Run a generated one-test suite in an isolated subprocess with the real Allure adapter
+    and inspect its result JSON.
+
+    Type: Controlled reporting integration.
+
+    Expected: Exactly one report has the expected status and process exit code; expected
+    failures retain their XFAIL explanation.
+
+    Cases: PASS, SKIP, XFAIL, XPASS, assertion, exception, teardown failure.
+
+    Scope: Intentional failures are confined to temporary subprocess suites. Their statuses
+    do not describe the live API.
+    """
     (tmp_path / "test_probe.py").write_text("import pytest\n" + source + "\n")
     env = {**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
     env.pop("PYTEST_ADDOPTS", None)
@@ -34,8 +48,23 @@ def test_adapter_preserves_status_and_exit_code(tmp_path, source, status, exit_c
         assert "XFAIL" in report["statusDetails"]["message"]
 
 
+# Fixture and assertion failures must retain sanitized HTTP and lifecycle evidence.
 @pytest.mark.parametrize("failure_phase", ["call", "setup", "teardown"])
 def test_evidence_survives_real_fixture_failures(tmp_path, failure_phase):
+    """Load the project's actual fixtures/hooks into a temporary suite and inject HTTP behavior
+    at a deterministic MockTransport boundary.
+
+    Type: Controlled reporting integration.
+
+    Expected: Pytest exits with failure; Allure classifies the phase correctly, all
+    attachment references resolve, and request/response plus applicable ownership evidence
+    survive.
+
+    Cases: Failure during call, setup, or teardown.
+
+    Scope: The controlled authentication secret must be absent from every result artifact.
+    No public sandbox is contacted.
+    """
     project = Path(__file__).parents[2]
     # Use the actual project fixtures/hooks with a deterministic mock HTTP boundary.
     conftest = (project / "tests/conftest.py").read_text()

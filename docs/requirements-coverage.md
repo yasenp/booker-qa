@@ -5,6 +5,11 @@ assertion failures. Business-rule rejection checks also use ordinary assertions;
 no live tests retain XFAIL handling. Infrastructure failures remain visible.
 UNSUPPORTED below means the API lacks the required concept, not a passing test.
 
+The [test case catalog](test-cases.md) links all 88 test functions (331 parameterized
+cases) to their source and explains each scenario's type, expected behavior, and
+limits. Counts describe collected cases; dated outcomes are in
+[validation results](validation-results.md).
+
 | Assessment requirement | Evidence / test | Representation |
 | --- | --- | --- |
 | Dynamic reauthentication after 401/403 | Unit concurrent rejection tests; live invalid-token PUT | Implemented; one refresh then return final result |

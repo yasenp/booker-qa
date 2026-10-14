@@ -24,9 +24,21 @@ def lifecycle():
     return module
 
 
-# A correct nested merge passes; lost fields, other corruption, and request failures must fail.
+# Nested-PATCH assertions must detect damaged state and request failures.
 @pytest.mark.parametrize("behavior", ["fixed", "lost_checkout", "other_corruption", "missing", "server_error", "timeout"])
 def test_nested_patch_detects_corruption(lifecycle, behavior):
+    """Run the actual live nested-PATCH scenario against modeled update and readback outcomes.
+
+    Type: Controlled update assertion check.
+
+    Expected: Only the correct nested merge passes; corruption, disappearance, or server
+    errors raise assertions and response loss propagates ReadTimeout.
+
+    Cases: Correct merge, lost checkout, other corruption, missing record, 500, timeout.
+
+    Scope: This checks the scenario's ability to find defects; it does not reproduce them on
+    a live server.
+    """
     payload = booking_payload()
     state = deepcopy(payload)
     patched = False
@@ -62,12 +74,22 @@ def test_nested_patch_detects_corruption(lifecycle, behavior):
         api.close()
 
 
-# The actual PUT/PATCH scenarios must reject type drift in either responses or stored state.
+# PUT and PATCH assertions must reject numeric coercion in responses or persisted state.
 @pytest.mark.parametrize("scenario", ["test_put_three_times_is_idempotent", "test_patch_preserves_every_untouched_field"],
                          ids=["put", "patch"])
 @pytest.mark.parametrize("failure_point", ["response", "persisted"])
 @pytest.mark.parametrize("field", ["depositpaid", "totalprice"])
 def test_live_update_checks_reject_type_drift(lifecycle, scenario, failure_point, field):
+    """Run the real update scenario with a mock that changes a boolean to an integer or an
+    integer price to a float after the first write.
+
+    Type: Controlled contract regression.
+
+    Expected: Response corruption raises AssertionError; malformed persisted state raises
+    ValidationError, and execution stops after one write.
+
+    Cases: PUT/PATCH x response/persisted x depositpaid/totalprice.
+    """
     payload = booking_payload()
     state = deepcopy(payload)
     writes = []
@@ -93,9 +115,19 @@ def test_live_update_checks_reject_type_drift(lifecycle, scenario, failure_point
         api.close()
 
 
-# A malformed create response must fail even if a subsequent GET would return valid data.
+# A malformed creation result must fail while preserving its returned ID for cleanup.
 @pytest.mark.parametrize("defect", ["booking_shape", "missing_booking", "extra_envelope_field", "status"])
 def test_create_contract_failure_keeps_id_available_for_cleanup(defect):
+    """Return a positive booking ID with an invalid creation envelope or status and invoke
+    BookingRegistry.create.
+
+    Type: Controlled creation resilience.
+
+    Expected: Creation raises the appropriate contract/status error, registers the ID before
+    failing, and cleanup deletes it without relying on a corrective GET.
+
+    Cases: Bad booking shape, missing booking, extra envelope field, wrong success status.
+    """
     payload = booking_payload()
     body = {"bookingid": 1, "booking": payload}
     if defect == "booking_shape":
@@ -128,9 +160,17 @@ def test_create_contract_failure_keeps_id_available_for_cleanup(defect):
         api.close()
 
 
-# Invalid identifiers must never become cleanup targets.
+# Invalid returned booking IDs must never become cleanup targets.
 @pytest.mark.parametrize("booking_id", [True, 0, -1, "1", None])
 def test_create_rejects_invalid_ids_without_registering_them(booking_id):
+    """Return each invalid bookingid in an otherwise shaped creation response.
+
+    Type: Controlled identifier validation.
+
+    Expected: BookingRegistry.create raises ValueError and leaves the ownership list empty.
+
+    Cases: True, zero, negative integer, numeric string, and null.
+    """
     payload = booking_payload()
     api = BookerClient(Settings(), transport=httpx.MockTransport(
         lambda request: httpx.Response(200, json={"bookingid": booking_id, "booking": payload})))
@@ -143,7 +183,7 @@ def test_create_rejects_invalid_ids_without_registering_them(booking_id):
         api.close()
 
 
-# The actual concurrent scenarios must allow either write order and detect lost data or failed writes.
+# Concurrent PATCH assertions must allow either write order and expose lost or corrupt updates.
 @pytest.mark.parametrize("scenario", [
     "test_conflicting_patch_preserves_one_price_and_untouched_fields",
     "test_concurrent_patch_preserves_both_independent_changes",
@@ -153,6 +193,21 @@ def test_create_rejects_invalid_ids_without_registering_them(booking_id):
     "corrupt_persisted", "invalid_persisted_type", "server_error", "response_loss",
 ])
 def test_parallel_patch_scenarios_detect_regressions(lifecycle, scenario, behavior):
+    """Run same-field and separate-field live scenarios against a barrier-synchronized
+    transport; force both valid write orders or inject lost data, corruption, 500, or
+    response loss.
+
+    Type: Controlled concurrency assertion check.
+
+    Expected: Valid orders pass; application regressions raise AssertionError and lost
+    responses raise ReadTimeout. Two distinct writer threads and measured release skew are
+    verified.
+
+    Cases: 2 live PATCH scenarios x 8 modeled outcomes.
+
+    Scope: Transport overlap is controlled locally. These cases validate assertion logic
+    rather than hosted race behavior.
+    """
     payload = booking_payload()
     state = deepcopy(payload)
     arrivals = Barrier(2, timeout=5)
@@ -217,12 +272,27 @@ def test_parallel_patch_scenarios_detect_regressions(lifecycle, scenario, behavi
         api.close()
 
 
-# Either complete race winner may pass; mixed, unstable, missing, or rejected results must fail.
+# Reconciliation must accept either complete winner and reject mixed, unstable, or rejected
+# outcomes.
 @pytest.mark.parametrize("behavior", [
     "winner_a", "winner_b", "mixed_fields", "partial_dates", "invalid_price_type",
     "unchanged", "drift", "missing", "conflict409", "precondition412", "server500",
 ])
 def test_conflicting_put_reconciliation_rejects_invalid_outcomes(lifecycle, behavior):
+    """Run the actual conflicting PUT scenario against two synchronized mock writers and three
+    modeled final reads.
+
+    Type: Controlled concurrency assertion check.
+
+    Expected: Winner A and B each pass. Partial merges, missing dates, invalid types,
+    unchanged state, drift, missing reads, and 409/412/500 fail with the intended assertion;
+    outcome classification is checked.
+
+    Cases: 11 winner, corruption, absence, drift, or status outcomes.
+
+    Scope: All three snapshots are collected before assertions. Conflict status alone is not
+    proof of optimistic locking.
+    """
     payload = booking_payload()
     writes = {}
     writer_threads = set()
@@ -284,10 +354,22 @@ def test_conflicting_put_reconciliation_rejects_invalid_outcomes(lifecycle, beha
         api.close()
 
 
-# Ordered controls must reject an ignored second write, mixed payloads, and later state drift.
+# Ordered overwrite controls must detect ignored second writes, mixed payloads, and drift.
 @pytest.mark.parametrize("writer_order", [(0, 1), (1, 0)], ids=["A_then_B", "B_then_A"])
 @pytest.mark.parametrize("behavior", ["correct", "ignored_second", "mixed_final", "drift"])
 def test_ordered_conflicting_put_control_detects_ignored_or_unstable_writes(lifecycle, writer_order, behavior):
+    """Run the actual A-to-B or B-to-A control against a mock that can ignore the second write
+    or alter subsequent readback.
+
+    Type: Controlled overwrite-policy assertion check.
+
+    Expected: Correct behavior selects the second writer; each injected defect raises the
+    intended assertion after three final snapshots are captured.
+
+    Cases: 2 write orders x correct/ignored/mixed/drifting state.
+
+    Scope: These are sequential control models, not concurrent server executions.
+    """
     payload = booking_payload()
     state = deepcopy(payload)
     writes = []

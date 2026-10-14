@@ -597,3 +597,29 @@ validation.json are under reports/sandbox-hygiene-20261014T203702Z. Base-config
 Allure generation preserves both full-suite histories byte-for-byte (nine live,
 eight offline runs). Only these two cases were rerun live; unrelated application
 findings remain open.
+
+## Test documentation and report descriptions — 15 October 2026
+
+All 88 collected test functions now have a short purpose comment and a docstring
+covering scenario, type, expected behavior, parameter cases, and material limits.
+The [test case catalog](test-cases.md) links every function: 39 live functions
+cover 135 cases and 49 controlled functions cover 196 cases. These are collection
+counts; the catalog does not imply that live application checks currently pass.
+
+Allure descriptions now use the dedented test docstrings, including when a case
+is skipped before fixture setup. This replaces the generic descriptions selected
+by test-name patterns. Test names, parameter IDs, assertions, API fixture behavior,
+and test logic are unchanged. An AST comparison verified that the only changes inside the
+22 test modules are comments and docstrings; the shared hook changes only report
+descriptions.
+
+Full offline verification: **196 passed, 135 skipped in 3.00 seconds**, exit code 0.
+All 331 collected node IDs and Allure history IDs match the previous suite. All
+331 result descriptions match their test docstrings, all 88 catalog source links
+and case counts are correct, and all 478 attachment references resolve.
+
+Results, JUnit, the generated Allure HTML, and validation.json are under
+`reports/test-documentation-20261014T205107Z/`. Isolated report generation preserved
+both full-suite histories byte-for-byte: nine live and eight offline runs.
+The public sandbox was not rerun for this documentation change; previous live
+findings and coverage limits remain unchanged.

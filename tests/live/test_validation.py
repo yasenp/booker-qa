@@ -77,33 +77,84 @@ def read_state(api, booking):
     return response_body(response)
 
 
-# Invalid scalar types and nested dates must be rejected by both full and partial updates.
+# Invalid scalar and nested values must be rejected without altering the owned booking.
 @pytest.mark.parametrize("method", ["PUT", "PATCH"])
 @pytest.mark.parametrize("invalid", INVALID_FIELD_CASES)
 def test_updates_reject_invalid_field_types(api, registry, booking, method, invalid):
+    """Submit invalid price, deposit, date-object, date-value, and firstname representations as
+    full or partial updates.
+
+    Type: Live input-validation negative.
+
+    Expected: HTTP 400/422 is returned and the original ID remains readable with its exact
+    previous payload.
+
+    Cases: 15 invalid field cases x PUT/PATCH.
+
+    Scope: String coercion, fractional prices, boolean-as-number values, malformed
+    calendars, and timestamps must not silently become valid stored data.
+    """
     assert_invalid_booking_rejected(api, registry, booking, method,
                                     invalid_field_changes(invalid, booking.payload), invalid)
 
 
-# Invalid scalar types and malformed nested dates must also be rejected during booking creation.
+# Creation must reject invalid field representations without producing a booking.
 @pytest.mark.parametrize("invalid", INVALID_FIELD_CASES)
 def test_creates_reject_invalid_field_types(api, registry, booking, invalid):
+    """Use a new unique guest for each invalid creation request and preserve a separate valid
+    control booking.
+
+    Type: Live input-validation negative.
+
+    Expected: HTTP 400/422 is returned, the control is unchanged, and any returned new
+    booking ID is absent and tracked for cleanup.
+
+    Cases: 15 invalid field cases sent with POST.
+
+    Scope: A distinct guest prevents duplicate rejection from masking field validation.
+    Hidden creations without a returned ID cannot be counted authoritatively.
+    """
     assert_invalid_booking_rejected(api, registry, booking, "POST",
                                     invalid_field_changes(invalid, booking.payload), invalid)
 
 
-# POST and PUT require both nested dates; a partial PATCH is covered by the preservation test instead.
+# Complete create and replace requests must include both nested booking dates.
 @pytest.mark.parametrize("method", ["POST", "PUT"])
 @pytest.mark.parametrize("missing", ["checkin", "checkout"])
 def test_full_requests_require_both_dates(api, registry, booking, method, missing):
+    """Omit one nested date from an otherwise complete POST or PUT payload.
+
+    Type: Live required-field negative.
+
+    Expected: HTTP 400/422 is returned without changing the valid booking or leaving an
+    accessible returned creation ID.
+
+    Cases: Missing checkin/checkout x POST/PUT.
+
+    Scope: Partial nested PATCH has different semantics and is tested for preservation
+    rather than required full-object replacement.
+    """
     dates = {key: value for key, value in booking.payload["bookingdates"].items() if key != missing}
     assert_invalid_booking_rejected(api, registry, booking, method, {"bookingdates": dates}, "missing_" + missing)
 
 
-# Checkout must be later than check-in and totalprice nonnegative on every write operation.
+# Every write operation must reject invalid date order and negative prices.
 @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH"])
 @pytest.mark.parametrize("invalid", ["reversed_dates", "equal_dates", "negative_price"])
 def test_business_invalid_values_rejected(api, registry, booking, method, invalid):
+    """Calculate each invalid change from a valid booking and submit it through the selected
+    mutation method.
+
+    Type: Live business-invariant negative.
+
+    Expected: HTTP 400/409/422 is returned, existing state stays unchanged, and any returned
+    creation ID does not remain accessible.
+
+    Cases: Reversed dates/equal dates/negative price x POST/PUT/PATCH.
+
+    Scope: These are ordinary requirement assertions; known sandbox acceptance is reported
+    as failure rather than XFAIL.
+    """
     dates = booking.payload["bookingdates"]
     if invalid == "negative_price":
         changes = {"totalprice": -1}
@@ -114,10 +165,23 @@ def test_business_invalid_values_rejected(api, registry, booking, method, invali
     assert_invalid_booking_rejected(api, registry, booking, method, changes, invalid, statuses=(400, 409, 422))
 
 
-# Client-calculated totals, true/false flags, and complete dates must survive POST, PUT, PATCH, and GET exactly.
+# Calculated totals and boolean deposit flags must survive complete write/read workflows.
 @pytest.mark.parametrize("nights,nightly_rate,depositpaid", [(1, 0, False), (1, 1, True),
                                                          (3, 125, False), (7, 199, True)])
 def test_calculated_price_and_deposit_round_trip(api, registry, nights, nightly_rate, depositpaid):
+    """Calculate totalprice from stay duration and a test nightly rate, create/read, extend the
+    stay through PUT, then PATCH only the deposit flag.
+
+    Type: Live contract and invariant positive.
+
+    Expected: Responses and GETs preserve exact calculated totals, boolean values, valid
+    dates, and every field left untouched by PATCH.
+
+    Cases: 4 night/rate/deposit combinations, including zero price and both flags.
+
+    Scope: The arithmetic is client-side test-data construction. The API exposes no server
+    rate/tax formula to validate.
+    """
     payload = booking_payload()
     checkin = date.fromisoformat(payload["bookingdates"]["checkin"])
     payload["bookingdates"]["checkout"] = (checkin + timedelta(days=nights)).isoformat()
@@ -147,9 +211,22 @@ def test_calculated_price_and_deposit_round_trip(api, registry, nights, nightly_
     assert_booking_matches("PATCH persisted deep contract", expected, read_state(api, booking))
 
 
-# Clients must not replace booking IDs or storage metadata; both test-owned bookings must survive unchanged.
+# Client PATCHes must not replace internal identity or storage metadata.
 @pytest.mark.parametrize("field", ["bookingid", "meta"])
 def test_patch_rejects_internal_fields(api, registry, field):
+    """Create two owned bookings and attempt to replace the first booking's ID with the
+    second's ID, or replace its metadata.
+
+    Type: Live internal-field negative.
+
+    Expected: HTTP 400/422 is returned and both original resources retain their IDs and
+    complete payloads.
+
+    Cases: bookingid and meta.
+
+    Scope: The owned collision destination is registered twice before mutation so cleanup
+    can remove both aliased records if the application accepts the forbidden change.
+    """
     first, _ = registry.create()
     second, _ = registry.create()
     payload = {field: second.booking_id if field == "bookingid" else {"revision": -1, "created": 0}}
@@ -170,10 +247,20 @@ def test_patch_rejects_internal_fields(api, registry, field):
     assert not differences, f"Internal-field update changed resource identity or state: {differences}"
 
 
-# Malformed IDs must not resolve to the numeric prefix or access/mutate its booking.
+# Malformed IDs must not resolve to or mutate their valid numeric prefix.
 @pytest.mark.parametrize("method", ["GET", "PUT", "PATCH", "DELETE"])
 @pytest.mark.parametrize("suffix", ["abc", ".9"], ids=["text-suffix", "fractional-id"])
 def test_resource_ids_require_exact_integer(api, booking, method, suffix):
+    """Append abc or .9 to an owned booking ID, call the selected route, and read the original
+    numeric ID.
+
+    Type: Live resource-ID negative.
+
+    Expected: The malformed route returns 400/404/422 and the original booking remains
+    accessible and unchanged.
+
+    Cases: Text/fractional suffixes x GET/PUT/PATCH/DELETE.
+    """
     kwargs = {} if method in {"GET", "DELETE"} else {
         "json": {**booking.payload, "totalprice": 765} if method == "PUT" else {"totalprice": 765}}
     response = api.request(method, f"/booking/{booking.booking_id}{suffix}",
@@ -189,8 +276,17 @@ def test_resource_ids_require_exact_integer(api, booking, method, suffix):
     assert not differences, f"Malformed ID changed the valid resource: {differences}"
 
 
-# Invalid price and boolean strings must be rejected without changing any booking field.
+# Invalid price and boolean strings must be rejected together without coercing stored values.
 def test_patch_rejects_invalid_types_without_mutation(api, registry):
+    """Start with a valid booking whose deposit flag is false, send both invalid strings in one
+    PATCH, and read back.
+
+    Type: Live combined-input regression.
+
+    Expected: HTTP 400/422 is returned and every original value and type remains unchanged.
+
+    Cases: totalprice='abc' and depositpaid='false'.
+    """
     payload = {**booking_payload(), "depositpaid": False}
     booking, _ = registry.create(payload)
     assert_booking_matches("Invalid-type PATCH baseline", payload, read_state(api, booking))
@@ -209,8 +305,21 @@ def test_patch_rejects_invalid_types_without_mutation(api, registry):
     assert_booking_matches("Rejected PATCH leaves state unchanged", payload, after)
 
 
-# Missing mandatory POST fields must return a client validation error, with valid POST controls working.
+# An incomplete POST must produce a validation error while valid creation still works.
 def test_incomplete_post_returns_client_error(api, registry, booking):
+    """Verify a valid control, submit the incomplete payload, then create and read a fresh
+    valid control.
+
+    Type: Live required-field regression.
+
+    Expected: The invalid POST returns 400/422 and both positive controls work; any
+    unexpected returned ID is retained for cleanup.
+
+    Cases: POST containing only firstname.
+
+    Scope: HTTP 500 is an application error and fails this check. Positive controls
+    distinguish invalid-input behavior from general unavailability.
+    """
     assert_booking_matches("Valid POST control before invalid input", booking.payload, read_state(api, booking))
     response = api.request("POST", "/booking", json={"firstname": booking_payload()["firstname"]})
     body = response_body(response)

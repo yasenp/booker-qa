@@ -20,9 +20,19 @@ def filters():
     return module
 
 
-# Client validation responses pass; a server error for malformed input must fail normally.
+# Malformed-filter assertions must accept validation errors and reject server failures.
 @pytest.mark.parametrize("status", [400, 422, 500])
 def test_malformed_filter_requires_client_error(filters, status):
+    """Run the live check-in validation scenario against a mock that keeps valid controls
+    healthy and varies only the malformed-filter response.
+
+    Type: Controlled search assertion check.
+
+    Expected: 400/422 pass the scenario; 500 raises an ordinary assertion with the actual
+    status.
+
+    Cases: HTTP 400, 422, and 500.
+    """
     payload = booking_payload()
 
     def respond(request):
@@ -43,8 +53,19 @@ def test_malformed_filter_requires_client_error(filters, status):
         api.close()
 
 
-# Failed valid-search controls must stop the scenario before any malformed request is sent.
+# A failed positive search control must stop malformed-filter validation immediately.
 def test_date_filter_control_failure_is_visible(filters):
+    """Run the live filter-validation scenario against an unavailable mocked search endpoint.
+
+    Type: Controlled search resilience.
+
+    Expected: The control failure raises AssertionError and no date-filter request is sent.
+
+    Cases: Positive control always returns 503.
+
+    Scope: A general outage must not be mistaken for successful rejection of malformed
+    input.
+    """
     requests = []
 
     def respond(request):

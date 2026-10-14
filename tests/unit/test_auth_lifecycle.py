@@ -76,23 +76,64 @@ def run_expiry_model(scenario, workers, rejection=403, behavior="expires"):
         api.close()
 
 
-# The expiry workflow accepts 401/403 and verifies one refresh for sequential or concurrent recovery.
+# The expiry workflow must handle both rejection codes and each recovery mode.
 @pytest.mark.parametrize("workers", [0, 1, 4])
 @pytest.mark.parametrize("rejection", [401, 403])
 def test_token_expiry_workflow_with_controlled_clock(auth_scenarios, workers, rejection):
+    """Run the actual expiry workflow against a clock-controlled token model with a ten-second
+    lifetime and one-second grace.
+
+    Type: Controlled lifecycle assertion check.
+
+    Expected: The workflow advances eleven simulated seconds, rejects the aged token,
+    accepts a fresh control, and issues exactly one recovery token when callers are enabled.
+
+    Cases: 401/403 x 0/1/4 recovery callers.
+
+    Scope: Clock advancement and token validity are simulated; these passes do not establish
+    expiry in the hosted sandbox.
+    """
     run_expiry_model(auth_scenarios["auth_expiry"], workers, rejection)
 
 
-# Nonexpiring tokens, outages, unauthorized mutation, and unsuccessful recovery must fail the live assertions.
+# The expiry assertions must reject non-expiration, outages, unauthorized mutation, and failed
+# recovery.
 @pytest.mark.parametrize("behavior", ["never_expires", "server_error", "rejection_mutates", "fresh_failure", "recovery_rejected"])
 def test_token_expiry_workflow_detects_failures(auth_scenarios, behavior):
+    """Inject each invalid server behavior into the clock-controlled model used by the live
+    expiry workflow.
+
+    Type: Controlled lifecycle regression.
+
+    Expected: The actual scenario raises AssertionError rather than treating the injected
+    failure as successful expiry enforcement.
+
+    Cases: Never expires, server error, rejection mutates, fresh failure, recovery
+    rejection.
+
+    Scope: This verifies the test oracle with deterministic models, not live server fault
+    handling.
+    """
     with pytest.raises(AssertionError):
         run_expiry_model(auth_scenarios["auth_expiry"], 1, behavior=behavior)
 
 
-# Revocation passes only when the original token is rejected, without silently authenticating again.
+# Revocation assertions must distinguish rejected old tokens from still-valid sessions.
 @pytest.mark.parametrize("revokes", [True, False])
 def test_new_login_policy_assertion_without_automatic_refresh(auth_scenarios, revokes, monkeypatch):
+    """Run the live two-client login workflow against a model that either clears old tokens or
+    keeps them valid.
+
+    Type: Controlled session-policy regression.
+
+    Expected: The revoking model passes; continued old-token acceptance raises the policy
+    assertion. Exactly two logins occur, so a silent refresh cannot hide revocation.
+
+    Cases: Revoking and non-revoking token models.
+
+    Scope: Validates the requested single-session test policy; it is not hosted revocation
+    or TTL evidence.
+    """
     payload = booking_payload()
     state = deepcopy(payload)
     valid = set()

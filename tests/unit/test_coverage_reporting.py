@@ -3,7 +3,21 @@ import importlib.util
 from pathlib import Path
 
 
+# Coverage totals must distinguish collected cases, executed cases, and passing cases.
 def test_scoped_coverage_never_counts_skips_or_failures_as_passes():
+    """Feed mixed Allure outcomes into the scoped idempotency coverage summarizer.
+
+    Type: Controlled reporting calculation.
+
+    Expected: Family/case denominators remain correct, skips do not count as execution,
+    failures do not count as passes, and conflicting-write results are excluded from
+    idempotency coverage.
+
+    Cases: Synthetic passed/skipped/broken/failed results plus an excluded conflict test.
+
+    Scope: Server branch coverage remains unmeasured; these counters describe the explicit
+    scenario catalog.
+    """
     path = Path(__file__).parents[2] / "scripts/report_coverage.py"
     spec = importlib.util.spec_from_file_location("scoped_coverage", path)
     module = importlib.util.module_from_spec(spec)

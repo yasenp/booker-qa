@@ -49,20 +49,60 @@ def repeat_update(api, booking, method, payload, repetitions):
         })
 
 
+# Repeated identical full updates must preserve the same observable booking state.
 @pytest.mark.parametrize("repetitions", [2, 5])
 def test_sequential_identical_put_preserves_observable_state(api, booking, repetitions):
+    """Submit one complete update repeatedly and GET the same booking after every write.
+
+    Type: Live idempotency.
+
+    Expected: Each PUT returns 200 with its submitted payload and every persisted snapshot
+    matches the single-request target.
+
+    Cases: 2 and 5 consecutive PUTs.
+
+    Scope: The original three-PUT case is retained separately. Hidden side effects,
+    operation counts, and resource-version stability are unmeasured.
+    """
     # Keep the original three-PUT test unchanged for stable Allure history.
     repeat_update(api, booking, "PUT", {**booking.payload, "lastname": "Repeated", "totalprice": 456}, repetitions)
 
 
+# Assigning the same price three times must preserve the full expected booking.
 def test_repeated_set_value_patch_preserves_observable_state(api, booking):
+    """Capture the initial booking, PATCH totalprice to 777 three times, and read back after
+    each request.
+
+    Type: Live idempotency.
+
+    Expected: All writes return 200 and both responses and persisted states preserve the new
+    price and every untouched field.
+
+    Cases: 3 totalprice assignments.
+
+    Scope: Applies to set-value PATCH only; increment/append operations and hidden side
+    effects are outside this check.
+    """
     # This scope is a set-value PATCH, not increment/append PATCH operations.
     repeat_update(api, booking, "PATCH", {"totalprice": 777}, 3)
 
 
-# Identical concurrent PUTs must preserve the intended single-request booking state.
+# Identical concurrent writers must converge on the single-request target payload.
 @pytest.mark.parametrize("workers", [2, 4])
 def test_concurrent_identical_put_preserves_observable_state(api, booking, workers):
+    """Acquire authentication before a barrier, release identical PUTs against one owned ID,
+    collect all outcomes, and read the final booking.
+
+    Type: Live concurrent idempotency.
+
+    Expected: Every write returns 200 with the submitted payload and final GET matches it
+    exactly. Client release skew and worker errors are retained.
+
+    Cases: 2 and 4 synchronized writers.
+
+    Scope: Checks API-visible state, not server operation counts, hidden effects, or exact
+    server overlap. Conflicting payloads are tested separately.
+    """
     initial = read_booking(api, booking)
     payload = {**booking.payload, "lastname": "ConcurrentIdentical", "totalprice": 888}
     api.auth.token()
@@ -101,7 +141,20 @@ def test_concurrent_identical_put_preserves_observable_state(api, booking, worke
     assert not differences
 
 
+# Repeated deletion must leave the booking absent even when response codes differ.
 def test_repeated_delete_keeps_booking_absent(api, booking):
+    """Delete one owned booking, repeat the same request twice, and verify absence throughout.
+
+    Type: Live idempotency.
+
+    Expected: The first DELETE returns 201; later requests return an allowed success/absence
+    status. Every confirming GET returns 404.
+
+    Cases: 3 DELETE requests with a GET after each.
+
+    Scope: Sandbox 405 is accepted here only with GET 404. This checks absence idempotency;
+    missing-resource HTTP semantics have a separate stricter test.
+    """
     initial = read_booking(api, booking)
     outcomes = []
     try:

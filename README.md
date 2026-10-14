@@ -135,6 +135,7 @@ and replacement IDs, response statuses, and confirmed absence.
 
 ## Review material
 
+- [Every test: scenario, type, expected behavior, parameters, and limits](docs/test-cases.md)
 - [API discovery](docs/api-discovery.md)
 - [Requirements coverage and unsupported capabilities](docs/requirements-coverage.md)
 - [Idempotency catalog and production extensions](docs/idempotency-coverage.md)

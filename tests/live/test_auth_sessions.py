@@ -1,3 +1,5 @@
+"""Live login, authorization, concurrent-session, and requested revocation-policy checks."""
+
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from uuid import uuid4
@@ -9,9 +11,22 @@ from reporting import assert_booking_matches, attach_json, compare, response_bod
 from booker_qa.client import BookerClient
 
 
-# Valid credentials must authorize a protected update and persist the complete booking.
+# A newly issued token must authorize a complete, persisted booking update.
 @pytest.mark.live
 def test_valid_login_authorizes_booking_update(api, booking):
+    """Acquire a token and send a protected PUT with its explicit cookie, followed by an
+    independent GET.
+
+    Type: Live authentication positive.
+
+    Expected: PUT and GET return 200 and exactly match the intended booking, including
+    strict field types and invariants.
+
+    Cases: One valid login.
+
+    Scope: Explicit cookies bypass automatic refresh, so the original token itself must
+    work.
+    """
     token = api.auth.token()
     payload = {**booking.payload, "totalprice": 432}
     path = f"/booking/{booking.booking_id}"
@@ -23,10 +38,22 @@ def test_valid_login_authorizes_booking_update(api, booking):
     assert_booking_matches("Valid-token persisted update", payload, response_body(persisted))
 
 
-# Wrong, empty, or omitted credentials must return Bad credentials without issuing a token.
+# Invalid credential combinations must return the documented denial body without a token.
 @pytest.mark.live
 @pytest.mark.parametrize("case", ["wrong_password", "empty_credentials", "missing_credentials"])
 def test_auth_rejects_invalid_credentials(api, settings, case):
+    """Submit each invalid credential shape to POST /auth.
+
+    Type: Live authentication negative.
+
+    Expected: HTTP 200 contains exactly the Bad credentials reason and no token or extra
+    fields.
+
+    Cases: Wrong password, empty credentials, missing credentials.
+
+    Scope: This endpoint reports authentication denial in its body; HTTP 200 alone is not
+    successful login.
+    """
     credentials = {
         "wrong_password": {"username": settings.username, "password": "wrong-" + uuid4().hex},
         "empty_credentials": {"username": "", "password": ""},
@@ -58,11 +85,24 @@ def assert_unauthorized_mutation_preserves_booking(api, booking, method, headers
     assert not differences, f"{method} authorization or state preservation failed: {differences}"
 
 
-# Missing, empty, unissued, and modified tokens must not authorize PUT, PATCH, or DELETE.
+# Unusable token cookies must not authorize mutations or change the stored booking.
 @pytest.mark.live
 @pytest.mark.parametrize("method", ["PUT", "PATCH", "DELETE"])
 @pytest.mark.parametrize("token_case", ["missing", "empty", "unissued", "modified"])
 def test_protected_mutations_reject_bad_tokens(api, booking, method, token_case):
+    """Try missing, empty, unissued, and altered token cookies against an owned booking, then
+    read the original ID.
+
+    Type: Live authorization negative.
+
+    Expected: Every mutation returns 403 and GET returns the full unchanged booking with
+    status 200.
+
+    Cases: 4 token cases x PUT/PATCH/DELETE.
+
+    Scope: Automatic refresh is disabled. Invalid tokens test rejection, not elapsed-time
+    expiration.
+    """
     headers = {}
     if token_case == "empty":
         headers["Cookie"] = "token="
@@ -75,17 +115,44 @@ def test_protected_mutations_reject_bad_tokens(api, booking, method, token_case)
     assert_unauthorized_mutation_preserves_booking(api, booking, method, headers)
 
 
-# Object-prototype property names are not issued credentials and must never authorize a mutation.
+# JavaScript prototype-property names must not be accepted as authentication tokens.
 @pytest.mark.live
 @pytest.mark.parametrize("method", ["PUT", "PATCH", "DELETE"])
 @pytest.mark.parametrize("property_name", ["toString", "constructor", "__proto__"])
 def test_inherited_property_tokens_are_rejected(api, booking, method, property_name):
+    """Send each property name as a raw token cookie and attempt a protected mutation on an
+    owned record.
+
+    Type: Live authorization regression.
+
+    Expected: HTTP 403 is accompanied by an unchanged, still-accessible booking; a denial
+    response cannot hide a mutation.
+
+    Cases: toString/constructor/__proto__ x PUT/PATCH/DELETE.
+
+    Scope: A source-review security assertion executed against the target; accepted
+    unauthorized writes fail normally.
+    """
     assert_unauthorized_mutation_preserves_booking(api, booking, method, {"Cookie": "token=" + property_name})
 
 
-# Independent parallel login requests must each issue a usable token for their own booking.
+# Four independent sessions must each receive a usable token for their own booking.
 @pytest.mark.live
 def test_parallel_independent_logins_issue_usable_tokens(api, settings, registry):
+    """Release four clients through a barrier; each logs in, updates its assigned booking, and
+    is checked through GET.
+
+    Type: Live authentication concurrency.
+
+    Expected: Four logical auth requests issue four distinct tokens, and all response and
+    persisted booking payloads match.
+
+    Cases: 4 clients and 4 owned bookings.
+
+    Scope: Clients use the same sandbox account and separate bookings. This checks
+    multiple-session behavior, not distinct-user isolation or exact simultaneous server
+    arrival.
+    """
     handles = [registry.create()[0] for _ in range(4)]
     clients = [BookerClient(settings, observer=api.observer) for _ in handles]
     barrier = Barrier(4, timeout=30)
@@ -124,9 +191,20 @@ def test_parallel_independent_logins_issue_usable_tokens(api, settings, registry
             client.close()
 
 
-# An unknown user must receive Bad credentials and no authentication token.
+# A unique unknown username must receive a credential denial without a token.
 @pytest.mark.live
 def test_auth_rejects_nonexistent_user(api):
+    """Submit a UUID-based unknown username with an invalid password to POST /auth.
+
+    Type: Live authentication negative.
+
+    Expected: HTTP 200 contains exactly the Bad credentials reason and no token.
+
+    Cases: One generated nonexistent username.
+
+    Scope: The response verifies failed authentication; there is no account-storage endpoint
+    to inspect registration independently.
+    """
     with allure.step("Attempt authentication with a unique nonexistent username"):
         response = api.request("POST", "/auth", json={
             "username": f"nonexistent-{uuid4().hex}",
@@ -204,9 +282,22 @@ def probe_previous_token_after_new_login(api, settings, booking):
         second_client.close()
 
 
-# A new login must revoke the previous token under the requested single-session policy.
+# The requested single-session policy must reject the previous token after a new login.
 @pytest.mark.live
 def test_new_login_invalidates_previous_token(api, settings, booking):
+    """Verify the first token, log in on a second client, verify the new token, and retry the
+    old cookie after an invalid-token control.
+
+    Type: Live session-policy check.
+
+    Expected: The old token receives 401/403 and cannot replace the state written by the new
+    session.
+
+    Cases: 2 clients using the same credentials.
+
+    Scope: Automatic refresh is disabled. Revocation is an additional requested policy, not
+    documented sandbox TTL behavior; continued old-token acceptance is an ordinary failure.
+    """
     status = probe_previous_token_after_new_login(api, settings, booking)
     assert status in {401, 403}, (
         f"Previous token must be rejected after a new login under the requested policy; got HTTP {status}"

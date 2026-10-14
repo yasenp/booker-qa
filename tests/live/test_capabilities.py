@@ -1,3 +1,5 @@
+"""Live duplicate-rejection requirement using calculated dates and independent sandbox sessions."""
+
 import allure
 import pytest
 from booker_qa.client import BookerClient
@@ -61,9 +63,23 @@ def attempt_duplicate_in_second_context(registry, settings):
         second_client.close()
 
 
-# The same calculated date range from a second session must be rejected; acceptance is a defect.
+# An identical calculated date-range booking must be rejected in the second session.
 @allure.story("Overlapping bookings: duplicate date range")
 def test_business_duplicate_rejection(registry, settings):
+    """Calculate check-in as today plus 30 days and a three-night stay; create through one
+    client and submit the same payload through another.
+
+    Type: Live business-rule negative.
+
+    Expected: The second POST returns 400/409, the first booking remains unchanged, and any
+    returned new ID is absent. Unexpected created IDs remain tracked for cleanup.
+
+    Cases: 2 independently authenticated sessions.
+
+    Scope: Both clients use the sandbox account. No room inventory, distinct-user ownership,
+    or authoritative operation count is exposed; acceptance fails the requested rejection
+    rule.
+    """
     response = attempt_duplicate_in_second_context(registry, settings)
     assert response.status_code in {400, 409}, (
         "Duplicate date-range booking must be rejected with HTTP 400 or 409; "

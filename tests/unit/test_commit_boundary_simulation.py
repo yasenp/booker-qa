@@ -10,9 +10,23 @@ from booker_qa.evidence import EvidenceCollector
 from reporting import attach_json, render_events
 
 
+# A lost mutation response must propagate uncertainty without replaying the write.
 @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
 @pytest.mark.parametrize("committed", [False, True], ids=["before-commit", "after-commit"])
 def test_lost_response_reports_uncertainty_without_replaying_mutation(method, committed):
+    """Raise ReadTimeout at a modeled boundary, optionally applying the business mutation to
+    local state before losing the response.
+
+    Type: Controlled fault simulation.
+
+    Expected: Only one request is sent, the timeout reaches the caller, and simulated
+    committed-operation count and state match the selected boundary.
+
+    Cases: POST/PUT/PATCH/DELETE x before/after simulated commit.
+
+    Scope: Allure identifies this as a simulation. It does not prove hosted transaction
+    boundaries, rollback, deduplication, or exactly-once effects.
+    """
     collector = EvidenceCollector()
     collector.phase = "call"
     initial = {"totalprice": 123, "firstname": "Original"}

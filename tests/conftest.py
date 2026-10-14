@@ -2,6 +2,7 @@ import json
 import math
 import platform
 import subprocess
+from inspect import getdoc
 from urllib.parse import urlsplit
 from pathlib import Path
 
@@ -36,6 +37,10 @@ def pytest_configure(config):
 
 def pytest_collection_modifyitems(config, items):
     for item in items:
+        # Collection-time descriptions also reach cases skipped before fixture setup.
+        description = getdoc(item.obj)
+        if description:
+            item.add_marker(allure.description(description))
         feature, requirement = feature_for(item)
         live = "live" in item.keywords
         if "test_idempotency" in str(item.path) or "put_three" in item.name:
@@ -165,46 +170,11 @@ def feature_for(item):
 
 @pytest.fixture(autouse=True)
 def report_context(request):
+    """Set readable report titles and tags; descriptions come from test docstrings."""
     name = (request.node.originalname or request.node.name).removeprefix("test_").replace("_", " ").capitalize()
     allure.dynamic.title(name + (" [" + request.node.name.split("[", 1)[1] if "[" in request.node.name else ""))
-    if "test_idempotency" in str(request.node.path) or "put_three" in request.node.name:
-        allure.dynamic.description("Verifies repeated identical requests preserve API-visible booking state. "
-                                   "Response validation is a separate contract check. Hidden business effects, "
-                                   "resource-version stability, and server operation counts are unmeasured. "
-                                   "Set-value PATCH conclusions apply only to that operation.")
-    elif "ordered_conflicting" in request.node.name:
-        allure.dynamic.description("Sequential A-to-B and B-to-A controls verify the sandbox overwrite policy. "
-                                   "The first response and GET complete before the second write starts. "
-                                   "Three final GETs must match the second payload. This is not a concurrent collision.")
-    elif "conflicting" in request.node.name:
-        allure.dynamic.description("Conflicting writes test collision integrity, not identical-request idempotency. "
-                                   "Both writes must succeed under the sandbox's unconditional overwrite policy. "
-                                   "Either complete candidate may win and must remain identical across three GETs. "
-                                   "No partial payload merge is permitted. Server commit order and direct database "
-                                   "state are unmeasured; 409/412 are not silently accepted as optimistic locking.")
-    elif "concurrent_patch" in request.node.name:
-        allure.dynamic.description("Two synchronized threads PATCH separate fields on one owned booking. "
-                                   "Both changes must persist and all other fields must remain unchanged. "
-                                   "Each response may include its own change alone or both changes. "
-                                   "Three final GETs must return the same combined state. "
-                                   "Measured client release skew does not guarantee server-side overlap.")
-    elif "commit_boundary_simulation" in str(request.node.path):
-        allure.dynamic.description("Controlled MockTransport response loss before/after a simulated commit. "
-                                   "Verifies client uncertainty and no blind mutation replay. "
-                                   "Does not prove live server transactions, rollback, or deduplication.")
-    elif "missing_prerequisite_is_recreated" in request.node.name or "sandbox_cleanup" in request.node.name:
-        allure.dynamic.description("A separate HTTP client deletes only records created by this test, simulating "
-                                   "external sandbox interference. Missing prerequisite GETs allow one recreation; "
-                                   "cleanup accepts DELETE 404 or 405 with a confirming GET 404. "
-                                   "Post-operation state assertions do not recreate records or mask data loss.")
     if "invalid_token" in request.node.name:
         allure.dynamic.tag("simulated-expiry")
-        allure.dynamic.description("Live protected request with a deliberately invalid token simulates expiry. "
-                                   "This does not prove a real server-side token expiration time.")
-    if "requires_token_ttl" in request.node.keywords:
-        allure.dynamic.description("Uses an unchanged server-issued token before and after the configured absolute "
-                                   "lifetime. Expiry probes use explicit cookies without automatic refresh. "
-                                   "Requires an expiry-enabled target and its documented TTL; no TTL is inferred.")
 
 def pytest_sessionfinish(session, exitstatus):
     # Only the controller writes run metadata; workers share UUID-named result files.

@@ -100,8 +100,22 @@ def exercise_token_expiry(api, booking, lifetime, workers, *, fresh_client, cloc
         assert_booking_matches("State after expiry recovery", recovered_payload, response_body(final))
 
 
-# An unchanged issued token must expire, preserve state on rejection, and refresh once across callers.
+# An aged server-issued token must be rejected, with bounded recovery when requested.
 @pytest.mark.parametrize("workers", [0, 1, 4], ids=["reject-expired", "refresh-sequential", "refresh-concurrent"])
 def test_real_token_expiry_and_reauthentication(api, settings, booking, token_lifetime, workers):
+    """Prove an issued token works, wait its configured absolute TTL plus grace, then reuse the
+    unchanged cookie. A fresh-token request is the availability control.
+
+    Type: Live authentication lifecycle.
+
+    Expected: The aged token receives 401/403 without changing the booking. Recovery modes
+    complete all updates with exactly one new auth request and issuance.
+
+    Cases: 0, 1, or 4 recovery callers.
+
+    Scope: Requires --live and a documented --token-ttl-seconds; otherwise skipped. The
+    three modes are rejection only, sequential refresh, and concurrent refresh. No sandbox
+    TTL is inferred.
+    """
     exercise_token_expiry(api, booking, token_lifetime, workers,
                           fresh_client=lambda: BookerClient(settings, observer=api.observer))

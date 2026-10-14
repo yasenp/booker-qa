@@ -22,10 +22,23 @@ def validation():
     return module
 
 
-# Only a controlled rejection without creation or mutation may pass; failures must still clean up every ID.
+# Invalid-input assertions must require both correct rejection and preserved state.
 @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH"])
 @pytest.mark.parametrize("behavior", ["reject_400", "reject_422", "accept_200", "server_500", "reject_but_change"])
 def test_invalid_input_status_state_and_cleanup(validation, method, behavior):
+    """Run the live rejection helper against clean 400/422 responses, accepted input, HTTP 500,
+    or a rejection that still changes state.
+
+    Type: Controlled validation assertion check.
+
+    Expected: Only clean rejection passes. Other cases raise AssertionError, POST uses a
+    distinct guest, and all returned IDs remain registered and are cleaned up.
+
+    Cases: POST/PUT/PATCH x 5 response/state behaviors.
+
+    Scope: This validates the test oracle and ownership handling; it does not claim hosted
+    validation behavior.
+    """
     records, invalid_requests = {}, []
 
     def respond(request):
