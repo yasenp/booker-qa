@@ -114,3 +114,54 @@ validation must leave the full booking unchanged if rejection starts working.
 Duplicate acceptance remains a business-policy gap because the API has no room
 inventory or owner model. API-007 concerns HTTP status semantics: repeated DELETE
 still satisfies observable-state idempotency when subsequent GET confirms absence.
+
+## Token lifetime and session policy — 14 October 2026
+
+The inspected upstream [authentication route](https://github.com/mwinteringham/restful-booker/blob/main/routes/index.js#L641)
+adds each generated token to globalLogins with the value true. The
+[protected PUT route](https://github.com/mwinteringham/restful-booker/blob/main/routes/index.js#L422)
+checks that map entry, with no issue timestamp or age comparison. A new login adds
+an entry without removing earlier tokens. This describes the inspected source;
+the hosted deployment revision is not established.
+
+The existing live probe confirms acceptance of both tokens after a second login.
+Its policy test now asserts rejection directly, rather than expecting failure.
+Three new actual-aging scenarios require an expiry-enabled target and its documented
+absolute TTL. They do not assign an arbitrary expiry time to this public sandbox.
+Without that configuration they explicitly skip before creating a booking; expiry
+remains unverified. A finite observation window cannot establish that a token never
+expires, and a local clock-model test cannot establish the hosted server's policy.
+
+## Source-review scenarios executed on the public sandbox — 14 October 2026
+
+The 48 new live scenarios ran against restful-booker.herokuapp.com: **18 passed
+and 30 failed**. These are direct assertions, without XFAIL for application defects.
+The local source checkout at commit 0046115 informed the scenarios; its identity
+is not assumed to match the hosted deployment. The following observations come
+from the hosted run's request/response and subsequent GET evidence.
+
+| Scenario | Hosted observation | Result |
+| --- | --- | --- |
+| AUTH-01/02 Valid and invalid credentials | A valid token authorized a persisted PUT; wrong password, empty credentials, and missing credentials returned Bad credentials without a token | Four new cases passed; the existing unknown-user case also passed |
+| AUTH-03 Invalid tokens | Missing, empty, unissued, and modified tokens returned 403 for PUT/PATCH/DELETE and left each booking unchanged | 12 passed |
+| AUTH-04 Authentication bypass | Cookies containing toString, constructor, or __proto__ authorized protected mutations without an issued token: PUT/PATCH returned 200 and persisted the update; DELETE returned 201 followed by GET 404 | Nine failed; authentication bypass confirmed |
+| AUTH-06 Independent concurrent logins | Four clients made four logical auth requests and received four distinct tokens; each updated and read back its own booking | One passed |
+| BOOK-02 Invalid scalar/date types | Invalid price, boolean, check-in, and checkout values were accepted by PUT and PATCH. Null bookingdates in PATCH returned 200 with a non-JSON response, also observed on GET. Numeric firstname returned 500 for PUT and was persisted by PATCH. PUT with null bookingdates returned 400 and preserved state | One passed, 11 failed |
+| BOOK-03 Internal booking ID | PATCH assigned the first booking the second owned booking's ID, returned 405, and made the original ID return 404. The second ID exposed the first booking's payload; cleanup deleted two records under that ID | One failed; resource identity corruption confirmed |
+| BOOK-03 Internal metadata | PATCH containing meta returned 200 with unchanged public booking fields | One failed against the explicit rejection expectation; hidden metadata persistence is not observable through this API |
+| BOOK-04 Malformed resource ID | Both a text suffix and fractional suffix resolved to the numeric prefix. GET/PUT/PATCH returned 200; DELETE returned 201 and removed the corresponding booking | Eight failed |
+
+These failures assert rejection of invalid or internal inputs and preservation of
+state. Acceptance of meta alone is weaker evidence than the observed booking-ID
+corruption; the suite does not infer a hidden database change from that response.
+The authorization cases use raw cookies, so automatic reauthentication cannot
+mask rejection or supply a legitimate token during the attempt.
+
+Every resource-specific request was checked against that test's owned IDs, including
+the numeric prefixes and collision target. All 89 recorded cleanup outcomes
+succeeded: 78 deletions and 11 confirmed absences. The new-login revocation policy
+still failed separately because the old token remained usable. Actual time-based
+expiry remains unverified: the three aging scenarios skipped without a documented TTL.
+
+See reports/live/html/index.html for the report and
+reports/source-scenarios-validation.json for the artifact/ownership audit.

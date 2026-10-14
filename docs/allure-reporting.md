@@ -65,12 +65,18 @@ verified through isolated adapter tests, not by changing actual test outcomes.
 Application checks are grouped by feature: Booking Search, Input Validation,
 PATCH Integrity, and HTTP Error Semantics. Their assertions fail on defects and
 pass when the application behaves correctly. There is no special expected-failure
-classification for application defects; the four unsupported **business-gap**
+classification for application defects; the three unsupported **business-gap**
 policies retain their previously agreed handling.
 
 Unsupported concepts remain entries in the attached coverage table. They are not
 invented passing tests. Invalid-token simulation is additionally tagged as simulated
 expiry; it is not evidence of a real server token TTL.
+Real-token aging scenarios are labeled **real-token-expiry** and require
+`--token-ttl-seconds`. Without a documented lifetime, their explicit skip reason
+says expiry was not executed. Configured TTL, grace, measured minimum token age,
+rejection status, state preservation, and recovery request counts are attached.
+New-login revocation is a direct assertion and displays as failed if an old token
+is still accepted under the requested single-session policy.
 
 ## Evidence and redaction
 
@@ -103,10 +109,14 @@ still fails the job even if report generation succeeds. Nothing is publicly publ
 
 ## Verified integration
 
-- Latest offline run: 88 passed, 35 live tests skipped.
-- Latest live run with two workers: 109 passed, 10 failed application checks,
-  and four strict XFAIL business-policy gaps. Pytest exits with status 1.
-- Both runs collect all 123 cases with the default pytest import configuration.
+- Latest offline run: 108 passed, 85 live tests skipped.
+- Latest live run with two workers: 146 passed, 41 failed (40 application checks
+  and the requested revocation policy), three missing-TTL skips, and three strict
+  XFAIL business-policy gaps. Pytest exits with status 1.
+- The 48 new source-review scenarios produced 18 passes and 30 assertion failures.
+- Both runs collect all 193 cases with the default pytest import configuration.
+- History retains all previous bytes and adds one run per mode: nine live and
+  eight offline runs. All 2,037 live attachment references resolve.
 - Status tests cover PASS, ordinary skip, XFAIL, strict XPASS, assertion failure,
   unexpected exception, and teardown failure using isolated subprocesses.
 - Sanitization and concurrent collector checks pass.

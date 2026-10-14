@@ -40,14 +40,14 @@ A 401/403 triggers one token refresh and one protected-request replay.
 - FAIL/ERROR: assertions, transport exhaustion, contract violations, or cleanup failures.
 - UNSUPPORTED: explicitly listed in the coverage document; never counted as PASS.
 
-There are four strict business-gap tests: duplicate rejection, reversed-date
-rejection, negative-price rejection, and previous-token revocation on a new login.
+There are three strict business-gap tests: duplicate rejection, reversed-date
+rejection, and negative-price rejection.
 Each has a separate sandbox characterization check. Unexpected API errors cannot
 satisfy the expected-failure exception filter. New-login revocation is an additional
-requested policy, separate from the assessment's reauthentication simulation.
+requested policy with a normal assertion, separate from the assessment's reauthentication simulation.
 
 Seven source-backed API defects have also been reproduced on the hosted sandbox.
-Ten live regression cases cover date filters, nested PATCH preservation, invalid
+The original ten live regression cases cover date filters, nested PATCH preservation, invalid
 PATCH types, invalid-input HTTP errors, and missing-resource status codes. They live
 in the filter, validation, and lifecycle modules and assert the intended behavior
 directly. Application defects fail these tests; corrected behavior passes normally.
@@ -58,6 +58,15 @@ See [the discovery evidence](docs/api-discovery.md).
 python -m pytest tests/live/test_filters.py tests/live/test_validation.py tests/live/test_lifecycle.py --live
 python -m pytest --live -m 'not business_gap'
 ```
+
+Source-review scenarios additionally cover missing/invalid credentials and tokens,
+inherited-property token bypass, four independent simultaneous logins, invalid
+PUT/PATCH field types, internal identifier/metadata protection, and strict resource
+ID parsing. All checks use ordinary assertions and only test-created booking IDs.
+The identifier-collision case registers the owned destination ID twice before the
+mutation so both records can be cleaned up if the API accepts the forbidden change.
+The AUTH-01 through AUTH-11 and BOOK-01 through BOOK-07 mapping is in
+[requirements coverage](docs/requirements-coverage.md).
 
 ## Architecture
 
@@ -157,10 +166,36 @@ and probes the original token through a protected PUT. Explicit token cookies
 bypass automatic reauthentication so revocation cannot be hidden by a refresh.
 An invalid-token control must return 403 and leave the booking unchanged.
 
-The sandbox retains the earlier token. A characterization test records that
-behavior; a strict XFAIL represents the requested single-session revocation policy.
-New-login revocation is distinct from time-based expiration, which is not measured.
+The requested single-session policy now asserts that the earlier token is rejected.
+The sandbox's continued acceptance therefore produces an ordinary failure. This is
+an explicit user-requested policy check; the API does not document session revocation.
+The previous acceptance-characterization test was removed so a corrected implementation
+can pass the policy test. New-login revocation is distinct from time-based expiration.
 
 ```sh
 python -m pytest tests/live/test_auth_sessions.py --live
 ```
+
+## Actual token lifetime
+
+`tests/live/test_auth_expiry.py` adds three live scenarios: expired-token rejection,
+sequential recovery, and four-caller recovery with one shared refresh. They retain
+an unchanged server-issued token, prove it works initially, wait past the configured
+absolute TTL plus grace, then assert 401/403 without automatic refresh and unchanged
+booking state. A fresh-token positive control checks that authentication still works.
+
+Supply the target's documented absolute lifetime; the option does not change server
+behavior. Configure `BOOKER_BASE_URL` and credentials for that expiry-enabled target,
+then use its actual TTL, for example through a shell variable:
+
+```sh
+python -m pytest tests/live/test_auth_expiry.py --live \
+  --token-ttl-seconds "$TARGET_TOKEN_TTL_SECONDS" --token-expiry-grace-seconds 1
+```
+
+The public sandbox's inspected upstream source stores tokens without a time-based
+expiry check. No TTL is assumed for it: these three cases skip explicitly when the
+option is absent. A skipped case does not verify expiry. The TTL must be long enough
+to complete the initial authenticated control. Controlled clock-model tests validate
+the test logic separately; they are not hosted expiry evidence. The actual hosted
+expiry limitation remains until a suitable target and its lifetime are supplied.

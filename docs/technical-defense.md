@@ -9,7 +9,11 @@
 3. AuthManager serializes initial issuance. Refresh takes the rejected token so
    a thread reuses a replacement already issued by another thread. The retry
    ceiling prevents a permanent 403 from causing a refresh loop. No invented TTL
-   is used: protected endpoints are the authoritative validity check.
+   is used: protected endpoints are the authoritative validity check. Optional real
+   aging tests require the target's documented absolute TTL and wait beyond it before
+   probing the unchanged token without automatic refresh. Missing TTL means an
+   explicit skip, not a passing expiry result. New-login revocation is a separate
+   requested policy with a direct assertion.
 4. BookingRegistry tracks only created IDs. It deep-copies payloads, records a
    prerequisite's replacement ID, and permits one recreation by default. Never
    recover a post-operation assertion: doing so would conceal a failed update.

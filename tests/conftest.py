@@ -1,4 +1,5 @@
 import json
+import math
 import platform
 import subprocess
 from urllib.parse import urlsplit
@@ -16,6 +17,21 @@ from booker_qa.schemas.booking import validate_invariants
 
 def pytest_addoption(parser):
     parser.addoption("--live", action="store_true", help="Enable public sandbox tests")
+    parser.addoption("--token-ttl-seconds", type=float, default=None,
+                     help="Documented absolute server token lifetime; enables real expiry tests")
+    parser.addoption("--token-expiry-grace-seconds", type=float, default=1.0,
+                     help="Additional wait after the configured token lifetime (default: 1 second)")
+
+
+def pytest_configure(config):
+    ttl = config.getoption("--token-ttl-seconds")
+    grace = config.getoption("--token-expiry-grace-seconds")
+    if ttl is not None and (not math.isfinite(ttl) or ttl <= 0):
+        raise pytest.UsageError("--token-ttl-seconds must be finite and greater than zero")
+    if not math.isfinite(grace) or grace < 0:
+        raise pytest.UsageError("--token-expiry-grace-seconds must be finite and nonnegative")
+    if ttl is not None and not config.getoption("--live"):
+        raise pytest.UsageError("--token-ttl-seconds requires --live")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -29,6 +45,8 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(allure.label("scenario_type", "conflicting-update-integrity"))
         elif "commit_boundary_simulation" in str(item.path):
             item.add_marker(allure.label("scenario_type", "response-loss-simulation"))
+        elif "requires_token_ttl" in item.keywords:
+            item.add_marker(allure.label("scenario_type", "real-token-expiry"))
         gap = "business_gap" in item.keywords
         for name, value in [("epic", "Space42 API Assessment"), ("feature", feature),
                             ("requirement", requirement), ("parentSuite", "Live API" if live else "Controlled tests"),
@@ -39,6 +57,17 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "live" in item.keywords:
                 item.add_marker(pytest.mark.skip(reason="Enable with --live"))
+    elif config.getoption("--token-ttl-seconds") is None:
+        for item in items:
+            if "requires_token_ttl" in item.keywords:
+                item.add_marker(pytest.mark.skip(
+                    reason="Real expiry not executed: provide the target's documented --token-ttl-seconds; sandbox TTL is undefined"))
+
+
+@pytest.fixture
+def token_lifetime(request):
+    return (request.config.getoption("--token-ttl-seconds"),
+            request.config.getoption("--token-expiry-grace-seconds"))
 
 
 @pytest.fixture(scope="session")
@@ -141,6 +170,10 @@ def report_context(request):
         allure.dynamic.tag("simulated-expiry")
         allure.dynamic.description("Live protected request with a deliberately invalid token simulates expiry. "
                                    "This does not prove a real server-side token expiration time.")
+    if "requires_token_ttl" in request.node.keywords:
+        allure.dynamic.description("Uses an unchanged server-issued token before and after the configured absolute "
+                                   "lifetime. Expiry probes use explicit cookies without automatic refresh. "
+                                   "Requires an expiry-enabled target and its documented TTL; no TTL is inferred.")
     if "business_gap" in request.node.keywords:
         allure.dynamic.description("Strict enterprise expectation. A known sandbox acceptance is XFAIL, "
                                    "which Allure displays as skipped. Infrastructure failures remain failures. "

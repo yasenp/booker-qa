@@ -236,3 +236,106 @@ Previous reports and history are archived under
 reports/archive/direct-assertions-20261014T135904Z. Audit results are in
 reports/direct-assertions-validation.json. Diff checks pass. Remote CI and visual
 browser inspection were not exercised during this update.
+
+
+## Token expiry scenarios and direct revocation assertion — 14 October 2026
+
+Added three live actual-aging scenarios: rejection of an unchanged issued token
+after its configured absolute TTL, sequential recovery, and four-caller recovery
+with one shared refresh. These scenarios use explicit token cookies for expiry
+probes, assert unchanged booking state on rejection, and check a fresh-token
+positive control before concluding that authentication is functioning. Report
+evidence records configured lifetime, grace, minimum observed age, and request counts.
+
+The target's documented lifetime is required through --token-ttl-seconds; a grace
+option defaults to one second. Invalid/nonfinite lifetimes are rejected before
+execution. No arbitrary public-sandbox TTL was invented. The inspected upstream
+source has no time-based token expiry check, and no expiry-enabled target with a
+defined lifetime was supplied. Consequently the three live cases explicitly skipped
+before fixtures ran. **Actual hosted expiry remains unverified.**
+
+The new-login revocation check now uses a normal assertion. Its earlier acceptance
+characterization was removed, allowing a revoking implementation to pass. The live
+check failed because the original token still authorized PUT with HTTP 200. This
+demonstrates noncompliance with the requested single-session policy, which is not
+documented as a public API guarantee; it does not establish a time-based TTL.
+
+Thirteen controlled checks passed: six expiry/recovery combinations using a clock
+model, five negative workflow conditions, and two revocation-policy outcomes.
+They validate the test assertions and client behavior, not the hosted server's
+expiry policy. Targeted authentication checks: 18 passed in 0.26 seconds.
+
+Full offline two-worker run: **101 passed, 37 skipped in 3.07 seconds**.
+Full live two-worker run: **121 passed, 11 failed, 3 skipped, 3 XFAIL in 64.49 seconds**.
+The failures are the ten existing application checks plus the direct revocation
+policy assertion. The three ordinary live skips are the unconfigured expiry cases;
+the three XFAILs remain duplicate, reversed-date, and negative-price business gaps.
+Supported idempotency cases passed 7/7 and controlled response-loss cases passed 8/8.
+
+All 35 tracked booking cleanup outcomes succeeded: 30 deletions and five confirmed
+absences. All 1,075 live attachment references resolve. Both reports were regenerated
+with current coverage attachments. Prior history bytes remain unchanged, with one
+new run per mode: eight live runs and seven offline runs. Of the previous 123 test
+identities, 122 remain; one characterization was removed and 16 cases added. Previous
+runs retain their original identities. Archives are under
+reports/archive/token-lifecycle-20261014T142258Z, and the audit is in
+reports/token-lifecycle-validation.json. Diff checks pass. Remote CI and visual
+browser inspection were not exercised during this update.
+
+## Source-review scenario execution — 14 October 2026
+
+Implemented 48 additional live cases in the authentication and input-validation
+modules, with short comments above each test. Coverage includes valid/invalid login,
+ordinary invalid tokens, inherited-property token bypass, independent parallel
+logins, invalid update types, internal-field updates, and strict resource IDs.
+The AUTH-01–11 / BOOK-01–07 mapping is in requirements-coverage.md; existing tests
+cover the remaining scenarios without duplicating them.
+
+Seven new controlled checks validate the assertions and cleanup: unauthorized
+mutations must fail even if the server reports 403, and both records must be removed
+after a booking-ID collision, including when the mutation returns an error.
+The focused controlled run passed all seven checks in 0.02 seconds.
+
+Full offline two-worker run: **108 passed, 85 skipped in 2.73 seconds**, exit code 0.
+Full public-sandbox two-worker run: **146 passed, 41 failed, 3 skipped, 3 XFAIL
+in 159.57 seconds**, exit code 1. Both invocations collected 193 cases. All 41
+failures are assertion failures; no setup/teardown errors or broken results occurred.
+
+The 48 new live cases produced **18 passes and 30 failures**:
+
+| New scenario family | Passed | Failed |
+| --- | ---: | ---: |
+| Valid login and protected update | 1 | 0 |
+| Wrong, empty, and missing credentials | 3 | 0 |
+| Missing, empty, unissued, and modified tokens | 12 | 0 |
+| Inherited-property token rejection | 0 | 9 |
+| Independent parallel logins | 1 | 0 |
+| Invalid PUT/PATCH field types | 1 | 11 |
+| Internal bookingid/meta fields | 0 | 2 |
+| Malformed resource IDs | 0 | 8 |
+
+The other 11 failures are the ten prior application checks and the requested
+new-login revocation policy. Three actual-expiry scenarios skipped because the
+public sandbox has no documented TTL configured. Three strict XFAILs remain the
+duplicate, reversed-date, and negative-price business-policy gaps. The supported
+idempotency catalog still passed 7/7; controlled response-loss cases passed 8/8.
+
+The four independent clients recorded four distinct usable tokens, four logical
+auth requests, and four successful issuances. Invalid-token rejection passed,
+while all nine inherited-property token attempts bypassed authentication and
+persisted a mutation or deletion. The internal-ID case exposed two records under
+one ID; its extra cleanup registration deleted both. The meta case establishes
+acceptance, not proof of hidden metadata persistence. See api-discovery.md for
+the per-family hosted observations.
+
+All 89 cleanup outcomes succeeded: 78 deletions and 11 confirmed absences. The
+audit checked every returned creation ID and all 373 resource-specific requests
+against the owning test's registered IDs. All 2,037 live attachment references
+resolve. Both HTML reports include the current coverage JSON and scope document.
+
+Allure history preserves its exact previous bytes and adds one run per mode:
+nine live runs and eight offline runs. All 138 previous test identities remain;
+48 live cases and seven controlled checks add 55 identities. Prior artifacts are
+archived in reports/archive/source-scenarios-20261014T144109Z. The audit is saved
+in reports/source-scenarios-validation.json. No service source was changed.
+Remote CI and visual browser inspection were not exercised during this update.
